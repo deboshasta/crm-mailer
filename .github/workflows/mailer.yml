@@ -1,0 +1,59 @@
+name: CRM mailer
+
+# ---------------------------------------------------------------------------
+# Runs the CRM email sweep in the cloud so Simon's PC no longer has to be on.
+# Each run sends: due-today client emails, any "Send now" flagged emails,
+# self gig check-ins, trivia/photo received notices, and the self-nags
+# (inquiry-leads, likely-no, proposal-not-sent). Every script is idempotent
+# and date/gap guarded, so running often is safe.
+#
+# Cadence is tiered to match Simon's working hours. Times below are UTC
+# (GitHub cron only understands UTC). Simon is US Eastern:
+#   - EDT (summer) = UTC-4   ->  the mapping in the comments
+#   - EST (winter) = UTC-5   ->  everything lands ~1 hour EARLIER local.
+# The exact minute never matters (idempotent), so the DST drift is harmless.
+# ---------------------------------------------------------------------------
+
+on:
+  schedule:
+    # Core working hours  ~9:00am-5:40pm ET  ->  every 20 min
+    - cron: '*/20 13-21 * * *'
+    # Evening  ~6:00pm-9:30pm ET  ->  every 30 min (crosses UTC midnight)
+    - cron: '0,30 22-23 * * *'
+    - cron: '0,30 0-1 * * *'
+    # Overnight backstop + morning nag coverage  ~11pm-8am ET
+    # (11:00 UTC = 7am ET feeds the inquiry nag; 12:00 UTC = 8am ET feeds the likely-no nag)
+    - cron: '0 3,5,7,9,11,12 * * *'
+  workflow_dispatch:        # lets you run it by hand from the Actions tab
+  repository_dispatch:      # lets the app's "Send now" button kick a run instantly
+    types: [send-now]
+
+# Never let two sweeps overlap (a slow run + a "Send now" run could double-fire).
+concurrency:
+  group: crm-mailer
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      DB_PASSWORD:  ${{ secrets.DB_PASSWORD }}
+      DB_HOST:      ${{ vars.DB_HOST }}
+      DB_USER:      ${{ vars.DB_USER }}
+      DB_PORT:      ${{ vars.DB_PORT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Send due + send-now + notifications
+        run: python send_due.py --send
+      - name: Inquiry leads self-nag
+        run: python inquiry_leads.py --send
+      - name: Likely-no self-nag
+        run: python likely_no_nag.py --send
+      - name: Proposal-not-sent self-nag
+        run: python proposal_notsent_nag.py --send
