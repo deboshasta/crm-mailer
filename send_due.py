@@ -270,14 +270,20 @@ def main():
             body = e["body"] if e.get("body") is not None else render_html(t["body"],V,signature)
             due.append((d,key,contact["email"],subj,body,st))
 
-    print(f"{TODAY}  -  {len(due)} email(s) due today  (mode: {'SEND' if SEND else 'DRY-RUN'})")
+    # CLIENT CADENCE WINDOW (Simon 2026-07-04): only send the due-today client emails between
+    # 10am and 12pm Eastern, so they cluster at a consistent time each day. Send-now, the
+    # trivia/photo notifications, self gig check-ins and the self-nags are NOT gated - they run
+    # whenever the sweep runs. Pass --anytime to bypass the window (manual / one-off runs).
+    _cad_ok = ('--anytime' in sys.argv) or (10 <= tz.hour() <= 12)
+    print(f"{TODAY}  -  {len(due)} email(s) due today  (mode: {'SEND' if SEND else 'DRY-RUN'})"
+          + ('' if _cad_ok else f'  [holding: outside 10am-12pm ET window, now {tz.hour()}:00 ET]'))
     for (d,key,to,subj,body,st) in due:
         print(f"  -> {to}  |  [{key}]  {subj[:70]}")
-        if SEND:
+        if SEND and _cad_ok:
             mailer.send_email(to, subj, body)
             st[key]={**(st.get(key) or {}), "sent":TODAY.isoformat()}
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
-    if SEND and due: print("marked sent + saved.")
+    if SEND and _cad_ok and due: print("marked sent + saved.")
 
     # ---- SEND NOW: emails the app flagged for immediate send (cue_state[key].send_now) ----
     # The "Send now" button in the CRM sets cue_state[key].send_now = true and kicks a run.
