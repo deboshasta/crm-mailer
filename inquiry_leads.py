@@ -16,7 +16,7 @@ FORCE = "--now" in sys.argv          # bypass the 7am-ET gate (for a manual/one-
 TODAY = tz.today().isoformat()       # Eastern day, so cloud (UTC) runs match Simon's local day
 SEND_HOUR = 7                        # first sweep at/after 7am Eastern sends the daily reminder
 # CRM app base for the deal deep-link (?deal=<id> opens that deal). Keep in sync with send_due.py.
-CRM_BASE = "http://localhost:5610"
+CRM_BASE = "https://crm.thesimonshow.com"
 GUARD_KEY = "_inquiry_lead"          # cue_state bookkeeping (not an email template key)
 
 MO = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]

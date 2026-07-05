@@ -10,7 +10,7 @@ import tz
 
 SEND = "--send" in sys.argv
 TODAY = tz.today()                      # Eastern day, so cloud (UTC) runs match Simon's local day
-CRM_BASE = "http://localhost:5610"      # keep in sync with send_due.py CRM_BASE
+CRM_BASE = "https://crm.thesimonshow.com"  # keep in sync with send_due.py CRM_BASE
 GUARD_KEY = "_proposal_nag"             # per-deal cue_state bookkeeping: last nag timestamp
 MIN_GAP_HOURS = 4                       # don't re-nag the same deal within this many hours
 BIZ_START, BIZ_END = 8, 20             # only nag between 8am and 8pm Eastern

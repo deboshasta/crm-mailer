@@ -17,8 +17,7 @@ TODAY = tz.today()          # Eastern "today" so cloud (UTC) runs match Simon's 
 CUSTOMIZE_BASE = "https://www.thesimonshow.com/trivia.html"
 
 # CRM app base for deep-links in notification emails (?deal=<id> opens that deal).
-# Local-only for now; update if/when the CRM is hosted somewhere reachable.
-CRM_BASE = "http://localhost:5610"
+CRM_BASE = "https://crm.thesimonshow.com"
 
 # trivia questions (full text) - must match the labels/keys on trivia.html
 TRIVIA_QUESTIONS = [

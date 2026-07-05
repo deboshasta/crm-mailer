@@ -12,7 +12,7 @@ import tz
 SEND = "--send" in sys.argv
 TODAY = tz.today()                          # Eastern day, so cloud (UTC) runs match Simon's local day
 SEND_HOUR = 8                               # first sweep at/after 8am Eastern sends the daily nag
-CRM_BASE = "http://localhost:5610"          # keep in sync with send_due.py CRM_BASE
+CRM_BASE = "https://crm.thesimonshow.com"    # keep in sync with send_due.py CRM_BASE
 GUARD_KEY = "_likely_no_nag"
 FORCE_DEAL = None
 if "--deal" in sys.argv:
