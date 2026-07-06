@@ -79,6 +79,24 @@ def missing_fields(t, e, V):
         return []
     return sorted(f for f in _tpl_fields(t) if not V.get(f) and f not in OPTIONAL_FIELDS)
 
+def _blocked_alert_html(rows):
+    """Immediate 'an email just got paused' alert to Simon. rows: [(client_name, key, [blanks], deal_id)]."""
+    b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
+    b.append('<h2 style="margin:0 0 4px">Email paused - missing info</h2>')
+    b.append('<p style="color:#5f6368;margin:0 0 16px">An email just came due but is on hold because a '
+             'required field is blank. Fill it in and it sends automatically:</p>')
+    for nm,key,blanks,did in rows:
+        url=f"{CRM_BASE}/?deal={did}&fixemail={key}"
+        b.append('<div style="border:1px solid #e6e6e6;border-radius:10px;padding:12px 14px;margin:0 0 10px">')
+        b.append(f'<div style="font-weight:bold;margin-bottom:2px">{html.escape(str(nm))}</div>')
+        b.append(f'<div style="color:#5f6368;font-size:12px;margin-bottom:9px">{html.escape(key)} &middot; '
+                 f'missing: <span style="color:#c0392b">{html.escape(", ".join(blanks))}</span></div>')
+        b.append(f'<a href="{html.escape(url)}" style="display:inline-block;background:#1155cc;color:#fff;'
+                 'text-decoration:none;font-weight:bold;padding:8px 16px;border-radius:8px">Add the missing info</a>')
+        b.append('</div>')
+    b.append('<p style="color:#9aa0a6;font-size:12px;margin-top:6px">You will also get a daily reminder until it is resolved.</p></div>')
+    return "".join(b)
+
 # Self gig check-ins: reminders emailed TO Simon before each booked gig (old GCal! function).
 # (days_before_show, label). Best-guess cadence - adjust freely.
 SELF_CHECKINS = [(7,"in 1 week"), (3,"in 3 days"), (1,"tomorrow"), (0,"TODAY")]
@@ -168,12 +186,26 @@ def _num(v):
     try: return f"{float(v):,.0f}"
     except: return ""
 
+# Name capitalization rule (global for email templates): capitalize the first letter of a name, but
+# leave names that already have 2+ capitals untouched (MaryClaire, D'Arcy, CBRE, J.G., initials).
+def _cap_first(s):
+    if not s: return s or ""
+    if sum(1 for ch in s if ch.isupper()) >= 2: return s
+    for i, ch in enumerate(s):
+        if ch.isalpha(): return s[:i] + ch.upper() + s[i+1:]
+    return s
+def _cap_full(contact):
+    f = contact.get("first_name"); l = contact.get("last_name"); full = contact.get("full_name")
+    if f and l: return _cap_first(f) + " " + _cap_first(l)
+    if full:    return _cap_first(full)
+    return _cap_first(f or "")
+
 def merge_values(deal, contact):
     sd=_d(deal.get("show_date"))
     first = (contact.get("first_name") or (contact.get("full_name") or "").split(" ")[0] or "")
     first = re.sub(r"(^|\s)(\S)", lambda m: m.group(1)+m.group(2).upper(), first)   # always capitalize first names
     V={
-        "ClientFirstName":first, "ClientFullName":contact.get("full_name") or "",
+        "ClientFirstName":first, "ClientFullName":_cap_full(contact),
         "ClientEmail":contact.get("email") or "", "ClientPhone":contact.get("phone_mobile") or contact.get("phone_other") or "",
         "ShowDate": (f"{WD[sd.weekday()]}, {MO[sd.month-1]} {_ord(sd.day)}, {sd.year}" if sd else ""),
         "ShowDateShort": (f"{MO[sd.month-1][:3]} {sd.day}, {sd.year}" if sd else ""),
@@ -246,8 +278,8 @@ def main():
             "deal_name","cue_state","stage_changed_at","created_at","primary_contact_id"]
     cur.execute("select "+",".join(cols_d)+" from deals")
     deals=[dict(zip(cols_d,r)) for r in cur.fetchall()]
-    cur.execute("select id,first_name,full_name,email,phone_mobile,phone_other from contacts")
-    CB={r[0]:dict(zip(["id","first_name","full_name","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
+    cur.execute("select id,first_name,last_name,full_name,email,phone_mobile,phone_other from contacts")
+    CB={r[0]:dict(zip(["id","first_name","last_name","full_name","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
     global PERF
     cur.execute("select id, first_name, full_name from performers")
     PERF={r[0]:{"first_name":r[1],"full_name":r[2]} for r in cur.fetchall()}
@@ -257,7 +289,7 @@ def main():
     cur.execute("select value from private.config where key='sequencer_start'")
     _r=cur.fetchone(); SEQ_START = datetime.date.fromisoformat(_r[0]) if _r and _r[0] else TODAY
 
-    due=[]; blocked_today=[]
+    due=[]; blocked_today=[]; new_blocks=[]
     for d in deals:
         st = d.get("cue_state") or {}
         if isinstance(st,str): st=json.loads(st or "{}")
@@ -286,8 +318,11 @@ def main():
             if blanks:
                 # PAUSE: a required merge field is blank -> do NOT send. Flag it so blocked_digest.py
                 # nags Simon daily and the re-check pass below auto-sends it once the field is filled.
+                was_blocked = bool(e.get("blocked"))
                 st[key] = {**e, "blocked": {"since": (e.get("blocked") or {}).get("since", TODAY.isoformat()), "fields": blanks}}
                 blocked_today.append((d, key, contact["email"], blanks))
+                if not was_blocked:   # first time this email is paused -> immediate alert to Simon (below)
+                    new_blocks.append((contact.get("full_name") or d.get("deal_name") or "deal", key, blanks, d["id"]))
                 if SEND:
                     cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
                 continue
@@ -315,6 +350,12 @@ def main():
         print(f"{TODAY}  -  {len(blocked_today)} auto email(s) PAUSED for missing fields:")
         for (d,key,to,blanks) in blocked_today:
             print(f"  -> [paused] {to}  |  [{key}]  missing: {', '.join(blanks)}")
+    if new_blocks:
+        print(f"{TODAY}  -  {len(new_blocks)} NEWLY paused this run -> immediate alert to Simon")
+        if SEND:
+            mailer.send_email("simon@thesimonshow.com",
+                              f"{len(new_blocks)} email(s) paused - missing info",
+                              _blocked_alert_html(new_blocks))
 
     # ---- SEND NOW: emails the app flagged for immediate send (cue_state[key].send_now) ----
     # The "Send now" button in the CRM sets cue_state[key].send_now = true and kicks a run.

@@ -21,8 +21,8 @@ def main():
             "deal_name","cue_state","stage_changed_at","created_at","primary_contact_id"]
     cur.execute("select "+",".join(cols)+" from deals")
     deals = [dict(zip(cols,r)) for r in cur.fetchall()]
-    cur.execute("select id,first_name,full_name,email,phone_mobile,phone_other from contacts")
-    CB = {r[0]:dict(zip(["id","first_name","full_name","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
+    cur.execute("select id,first_name,last_name,full_name,email,phone_mobile,phone_other from contacts")
+    CB = {r[0]:dict(zip(["id","first_name","last_name","full_name","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
     cur.execute("select id, first_name, full_name from performers")
     send_due.PERF = {r[0]:{"first_name":r[1],"full_name":r[2]} for r in cur.fetchall()}
     cur.execute("select key,subject,body_html from templates where active=true")
