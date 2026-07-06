@@ -225,11 +225,12 @@ def _gcal_email_html(d, V, token, reminder):
           ("Event details", V.get("EventDetails") or "-"),
           ("Format", V.get("FormatDetails") or "-"),
           ("Money", "Fee $%s  -  deposit $%s  -  balance $%s" % (V.get("AppearanceFee") or "?", V.get("DepositAmount") or "0", V.get("BalanceAmount") or "?"))]
-    b.append('<table style="border-collapse:collapse;margin-top:6px;font-size:13px">')
-    for k,val in rows:
-        b.append('<tr><td style="padding:3px 16px 3px 0;color:#5f6368;vertical-align:top;white-space:nowrap"><b>%s</b></td>'
-                 '<td style="padding:3px 0">%s</td></tr>' % (html.escape(k), html.escape(str(val))))
-    b.append('</table>')
+    # single preformatted block: select it all + paste straight into the calendar appointment (no table
+    # artifacts), or grab one line on its own. <pre> keeps the line breaks on copy; pre-wrap wraps long lines.
+    info = "\n".join("%s: %s" % (k, val) for k, val in rows)
+    b.append('<pre style="font-family:Verdana,Arial,sans-serif;font-size:13px;line-height:1.55;'
+             'white-space:pre-wrap;word-break:break-word;background:#f6f7f9;border:1px solid #dcdcdc;'
+             'border-radius:8px;padding:12px 14px;margin:6px 0 0;color:#202124">%s</pre>' % html.escape(info))
     b.append('</div>')
     return "".join(b)
 
