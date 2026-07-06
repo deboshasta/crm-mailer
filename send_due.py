@@ -20,6 +20,8 @@ CUSTOMIZE_BASE = "https://www.thesimonshow.com/trivia.html"
 CRM_BASE = "https://crm.thesimonshow.com"
 # Approval-mode: Approve/Cancel buttons in the authorize email point at this Vercel endpoint.
 APPROVE_BASE = "https://crm-send-the-simon-show.vercel.app/api/approve-email"
+# GCal!: the "Update GCal link" button opens this paste page to store the calendar-event URL.
+GCAL_PASTE_BASE = "https://crm-send-the-simon-show.vercel.app/api/gcal-link"
 
 # trivia questions (full text) - must match the labels/keys on trivia.html
 TRIVIA_QUESTIONS = [
@@ -141,8 +143,18 @@ def _parse_time(s):
     if ap=="am" and h==12: h=0
     return (h,mm) if 0<=h<=23 and 0<=mm<=59 else None
 
+def _gcal_day_link(d):
+    """Google Calendar day view for the show date, with the show time in the query so Simon can see it:
+    https://calendar.google.com/calendar/u/0/r/customday/YYYY/MM/DD?<show_time>"""
+    sd=_d(d.get("show_date"))
+    if not sd: return ""
+    stime=re.sub(r"\s+","",(d.get("show_time") or ""))   # drop spaces so it stays readable in the URL (7pm, 5:30PM)
+    base="https://calendar.google.com/calendar/u/0/r/customday/%04d/%02d/%02d" % (sd.year, sd.month, sd.day)
+    return base + ("?"+stime if stime else "")
+
 def gcal_link(d, V):
-    """Google Calendar add-event link prefilled from the deal (the gcal! generated link)."""
+    """The calendar link for a deal: the SAVED event URL once Simon has stored it, else the add-event link."""
+    if d.get("gcal_url"): return d["gcal_url"]                 # saved event URL wins for every gcal link
     sd=_d(d.get("show_date"))
     if not sd: return ""
     who=V.get("ClientFullName") or d.get("deal_name") or "Gig"
@@ -158,6 +170,30 @@ def gcal_link(d, V):
         (f'Client: {V.get("ClientPhone")}' if V.get("ClientPhone") else "")] if x)
     params={"action":"TEMPLATE","text":title,"dates":dates,"location":V.get("Venue") or "","details":details}
     return "https://calendar.google.com/calendar/render?"+urllib.parse.urlencode(params)
+
+def _gcal_email_html(d, V, token, reminder):
+    """GCal! email to Simon: a calendar link for the show + an 'Update GCal link' button (paste page).
+    reminder=True adds the 'add to calendar and update gcal link' banner at the top."""
+    who = V.get("ClientFullName") or d.get("deal_name") or "this booking"
+    when = V.get("ShowDate") or (str(d.get("show_date")) if d.get("show_date") else "TBD")
+    stime = (d.get("show_time") or "").strip()
+    link = d.get("gcal_url") or _gcal_day_link(d)   # saved event URL wins, else the custom-day link
+    paste = "%s?t=%s" % (GCAL_PASTE_BASE, token)
+    b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
+    if reminder:
+        b.append('<div style="background:#fff4d6;border:1px solid #e0a92e;border-radius:8px;padding:10px 12px;'
+                 'margin:0 0 14px;font-weight:bold;color:#7a5a00">Reminder - add to calendar and update gcal link</div>')
+    b.append('<h2 style="margin:0 0 4px">Add to calendar: %s</h2>' % html.escape(str(who)))
+    b.append('<p style="color:#5f6368;margin:0 0 14px">%s%s</p>' % (html.escape(str(when)), (" at "+html.escape(stime)) if stime else ""))
+    if link:
+        b.append('<a href="%s" style="display:inline-block;background:#1155cc;color:#fff;text-decoration:none;'
+                 'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 8px 10px 0">Open calendar</a>' % html.escape(link))
+    b.append('<a href="%s" style="display:inline-block;background:#1f8f5f;color:#fff;text-decoration:none;'
+             'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 0 10px 0">Update GCal link</a>' % html.escape(paste))
+    if d.get("gcal_url"):
+        b.append('<p style="color:#5f6368;font-size:12px;margin-top:8px">Saved event stored &#10003;</p>')
+    b.append('</div>')
+    return "".join(b)
 
 def selfcheckin_html(d, V, label):
     rows=[("Client", (V["ClientFullName"] or "-") + (f'   {V["ClientPhone"]}' if V["ClientPhone"] else "")),
@@ -306,7 +342,7 @@ def main():
             "proposal_link","audience_details","show_format","amount","deposit_amount","balance_amount",
             "event_type","is_repeat","customize_token","trivia","trivia_received_at","trivia_notified_at",
             "performer_id","commission_amount","proposal_sent_at","photos_received_at","photos_notified_at",
-            "deal_name","cue_state","stage_changed_at","created_at","primary_contact_id"]
+            "deal_name","cue_state","stage_changed_at","created_at","primary_contact_id","gcal_url"]
     cur.execute("select "+",".join(cols_d)+" from deals")
     deals=[dict(zip(cols_d,r)) for r in cur.fetchall()]
     cur.execute("select id,first_name,last_name,full_name,email,phone_mobile,phone_other from contacts")
@@ -491,6 +527,37 @@ def main():
             st[key]=ne
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
     if SEND and unblock: print("unblocked emails sent.")
+
+    # ---- GCal!: on Closed Won, email Simon a calendar link every day until he saves the event URL ----
+    gcal_due = []
+    for d in deals:
+        if d.get("stage") != "closed_won": continue
+        if d.get("gcal_url"): continue                       # done - Simon saved the event URL
+        sd = _d(d.get("show_date"))
+        if not sd or sd < TODAY: continue                    # only upcoming gigs need a calendar entry
+        mv = _d(d.get("stage_changed_at"))
+        if not mv or mv < SEQ_START: continue                # only deals moved to Closed Won since go-live
+        st = d.get("cue_state") or {}
+        if isinstance(st,str): st=json.loads(st or "{}")
+        g = st.get("_gcal") or {}
+        if g.get("last") == TODAY.isoformat(): continue      # once per day
+        token = g.get("token") or secrets.token_urlsafe(18)
+        gcal_due.append((d, token, not g.get("first_sent"), st))
+    print(f"{TODAY}  -  {len(gcal_due)} GCal! reminder(s) due")
+    for (d, token, first, st) in gcal_due:
+        contact = CB.get(d.get("primary_contact_id")) or {}
+        V = merge_values(d, contact)
+        who = V.get("ClientFullName") or d.get("deal_name") or "booking"
+        when = V.get("ShowDateShort") or str(d.get("show_date"))
+        subj = ("GCal! - %s - %s" % (who, when)) if first else ("Reminder: add to calendar - %s - %s" % (who, when))
+        print("  -> [gcal] %s" % subj[:70])
+        if SEND:
+            mailer.send_email("simon@thesimonshow.com", subj, _gcal_email_html(d, V, token, reminder=not first), owner=True)
+            g = {**(st.get("_gcal") or {}), "token": token, "last": TODAY.isoformat()}
+            if first: g["first_sent"] = TODAY.isoformat()
+            st["_gcal"] = g
+            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+    if SEND and gcal_due: print("gcal reminders sent.")
 
     # ---- self gig check-ins: reminders TO Simon about upcoming booked gigs ----
     self_to = mailer.load_config()["from_email"]
