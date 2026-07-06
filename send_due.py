@@ -614,6 +614,35 @@ def main():
             cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
     if SEND and mc_due: print("magic castle invites sent.")
 
+    # ---- W9: on Closed Won for CORPORATE deals (event_type='corporate'), send the W9 once, with its PDF
+    #      attachment. Like the Magic Castle it goes via mailer.send_email (safe mode -> Simon for auth),
+    #      not the CUE/approve flow which can't carry attachments. One per deal (cue_state['w9_email']). ----
+    w9_due = []
+    for d in deals:
+        if d.get("event_type") != "corporate": continue
+        if d.get("stage") != "closed_won": continue
+        mv = _d(d.get("stage_changed_at"))
+        if not mv or mv < SEQ_START: continue                 # only deals moved to Closed Won since go-live
+        st = d.get("cue_state") or {}
+        if isinstance(st,str): st=json.loads(st or "{}")
+        e = st.get("w9_email") or {}
+        if e.get("sent") or e.get("cancelled"): continue
+        contact = CB.get(d.get("primary_contact_id")) or {}
+        if not contact.get("email"): continue
+        t = TPL.get("w9_email")
+        if not t: continue
+        V = merge_values(d, contact)
+        w9_due.append((d, contact["email"], fill_subject(t["subject"],V), render_html(t["body"],V,signature),
+                       attachments.attachments_for("w9_email", d, contact), st))
+    print(f"{TODAY}  -  {len(w9_due)} W9 email(s) due (corporate Closed Won)")
+    for (d, to, subj, bodyw, atts, st) in w9_due:
+        print("  -> [w9] %s  |  %s  |  att=%s" % (to, subj[:46], [a[0] for a in atts]))
+        if SEND:
+            mailer.send_email(to, subj, bodyw, attachments=atts)
+            st["w9_email"] = {**(st.get("w9_email") or {}), "sent": TODAY.isoformat()}
+            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+    if SEND and w9_due: print("w9 emails sent.")
+
     # ---- self gig check-ins: reminders TO Simon about upcoming booked gigs ----
     self_to = mailer.load_config()["from_email"]
     self_due = []
