@@ -317,6 +317,8 @@ def main():
     cur.execute("select key,subject,body_html from templates where active=true")
     TPL={r[0]:{"subject":r[1],"body":r[2]} for r in cur.fetchall()}
     signature=TPL.get("_signature",{}).get("body","")
+    # SEQ_START = migration cutover = the SEND-DATE floor (the day the new CRM took over from Zoho).
+    # Emails scheduled before it are never sent; today's + any missed-since-cutover are sent/caught up.
     cur.execute("select value from private.config where key='sequencer_start'")
     _r=cur.fetchone(); SEQ_START = datetime.date.fromisoformat(_r[0]) if _r and _r[0] else TODAY
     # APPROVAL MODE: when on, auto emails are HELD (not sent) and Simon approves each via the authorize email.
@@ -332,7 +334,6 @@ def main():
         if isinstance(st,str): st=json.loads(st or "{}")
         d["cue_state"]=st   # make in-memory cue_state the single source of truth across the passes below
         contact = CB.get(d.get("primary_contact_id")) or {}
-        if _d(d.get("created_at")) < SEQ_START: continue   # go-live cutoff: never backfill pre-existing deals
         for (key,anchor,off,mode,stages) in CUE:
             # customization/trivia chase stops once the trivia has been received
             if key=="customization_request" and d.get("trivia_received_at"): continue
@@ -346,7 +347,10 @@ def main():
             base=anchor_date(d,anchor,stages)
             if not base: continue
             send_date = base + datetime.timedelta(days=off)
-            if send_date != TODAY: continue
+            # Migration cutover: SEQ_START is the send-date FLOOR (the day the new CRM took over from Zoho).
+            # Skip anything scheduled BEFORE it (Zoho's backlog - permanently). Send today's, and CATCH UP any
+            # scheduled on/after the floor that slipped (missed). Never re-send the pre-cutover backlog.
+            if send_date < SEQ_START or send_date > TODAY: continue
             e = st.get(key) or {}
             if e.get("sent") or e.get("cancelled"): continue
             if not contact.get("email"): continue
