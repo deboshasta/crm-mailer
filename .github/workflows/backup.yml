@@ -1,0 +1,51 @@
+name: CRM DB backup
+
+# Nightly encrypted database backup. Dumps Postgres (pg_dump 17), GPG-encrypts it, stores it as a
+# GitHub Release asset (and Google Drive if RCLONE is configured), prunes old ones, and emails Simon
+# success/failure. Run it by hand any time from the Actions tab -> "Run workflow".
+
+on:
+  schedule:
+    - cron: '0 7 * * *'      # ~3am ET (EDT) / ~2am ET (EST), nightly
+  workflow_dispatch:
+
+permissions:
+  contents: write            # needed to create/delete Releases (where backups are stored)
+
+concurrency:
+  group: crm-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL:   ${{ vars.SUPABASE_URL }}
+      DB_PASSWORD:    ${{ secrets.DB_PASSWORD }}
+      DB_HOST:        ${{ vars.DB_HOST }}
+      DB_USER:        ${{ vars.DB_USER }}
+      DB_PORT:        ${{ vars.DB_PORT }}
+      GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+      RCLONE_REMOTE:  ${{ vars.RCLONE_REMOTE }}      # optional, e.g. "gdrive:CRM-Backups"
+      RCLONE_CONF:    ${{ secrets.RCLONE_CONF }}     # optional, rclone.conf contents for Google Drive
+      GH_TOKEN:       ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps + pg_dump 17
+        run: |
+          pip install -r requirements.txt
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+      - name: Configure rclone for Google Drive (optional)
+        if: env.RCLONE_CONF != ''
+        run: |
+          sudo -v ; curl https://rclone.org/install.sh | sudo bash
+          mkdir -p ~/.config/rclone
+          printf '%s' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
+      - name: Run backup
+        run: python backup.py
