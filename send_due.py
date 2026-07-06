@@ -75,7 +75,16 @@ AUTO_MODES = ("auto",)   # 'window' mode retired -> folded into 'auto' (they alw
 # cue_state[key].blocked = {"since": iso, "fields": [...]}. blocked_digest.py nags Simon once a
 # day until it is filled (then the email auto-sends, see the re-check pass) or cancelled.
 # OPTIONAL fields are legitimately often-blank and never block (kept in sync with check_missing.py).
-OPTIONAL_FIELDS = {"Company", "GuestOfHonor", "ProposalLink", "LastShowYear"}
+OPTIONAL_FIELDS = {"Company", "GuestOfHonor", "ProposalLink", "LastShowYear", "EventDetails"}
+# when one of these is BLANK, drop the WHOLE line it sits on (don't show it, don't flag it)
+OPTIONAL_LINE_FIELDS = {"EventDetails"}
+def _drop_empty_optional_lines(raw, V):
+    out=[]
+    for ln in (raw or "").split("\n"):
+        toks=re.findall(r"\{\{(\w+)\}\}", ln)
+        if any(t in OPTIONAL_LINE_FIELDS and not V.get(t) for t in toks): continue   # blank optional -> drop line
+        out.append(ln)
+    return "\n".join(out)
 def _tpl_fields(t):
     return set(re.findall(r"\{\{(\w+)\}\}", (t.get("subject") or "") + " " + (t.get("body") or "")))
 def missing_fields(t, e, V):
@@ -328,6 +337,7 @@ def _lists_and_breaks(s):
     return "".join(out)
 
 def render_html(raw, V, signature):
+    raw = _drop_empty_optional_lines(raw, V)   # blank EventDetails etc. -> drop the whole line
     s = html.escape(raw or "")
     s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
     # markdown links: target may be a literal https URL OR a {{Field}} that resolves to a URL
