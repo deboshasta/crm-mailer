@@ -59,6 +59,7 @@ CUE = [
     ("precall_shark","stage",10,"auto",("schedule_call",)),
     ("precall_breakup","stage",14,"auto",("schedule_call",)),
     ("guest_excited","stage",0,"auto",("closed_won","booked")),
+    ("confirm_details","stage",0,"auto",("closed_won",)),
     ("refer","stage",0,"flag",("refer",)),
     ("closed_lost_daybefore","show",-1,"flag",("closed_lost",)),
     ("closed_lost_after","show",2,"flag",("closed_lost",)),
