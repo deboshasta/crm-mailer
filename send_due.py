@@ -8,6 +8,7 @@ import sys, json, html, re, datetime, urllib.parse, secrets
 from db import connect
 import mailer
 import tz
+import attachments
 
 SEND = "--send" in sys.argv
 TODAY = tz.today()          # Eastern "today" so cloud (UTC) runs match Simon's local day
@@ -355,7 +356,8 @@ def main():
             "proposal_link","audience_details","show_format","amount","deposit_amount","balance_amount",
             "event_type","is_repeat","customize_token","trivia","trivia_received_at","trivia_notified_at",
             "performer_id","commission_amount","proposal_sent_at","photos_received_at","photos_notified_at",
-            "deal_name","cue_state","stage_changed_at","created_at","primary_contact_id","gcal_url"]
+            "deal_name","cue_state","stage_changed_at","created_at","primary_contact_id","gcal_url",
+            "deposit_status","deposit_paid_at"]
     cur.execute("select "+",".join(cols_d)+" from deals")
     deals=[dict(zip(cols_d,r)) for r in cur.fetchall()]
     cur.execute("select id,first_name,last_name,full_name,email,phone_mobile,phone_other from contacts")
@@ -571,6 +573,46 @@ def main():
             st["_gcal"] = g
             cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
     if SEND and gcal_due: print("gcal reminders sent.")
+
+    # ---- Magic Castle invite: ONE per deal (shared marker cue_state['magic_castle']). Closed-Won version
+    #      fires at Closed Won (priority); deposit version ~10 min after the deposit is marked paid. Whichever
+    #      fires first claims the marker; the other is suppressed. Has an attachment, so it goes via
+    #      mailer.send_email (safe mode routes it to Simon for auth) - NOT the approve/hold flow. ----
+    _now = datetime.datetime.now(datetime.timezone.utc)
+    mc_due = []
+    for d in deals:
+        st = d.get("cue_state") or {}
+        if isinstance(st,str): st=json.loads(st or "{}")
+        e = st.get("magic_castle") or {}
+        if e.get("sent") or e.get("cancelled"): continue          # already went (or cancelled) - one per deal
+        contact = CB.get(d.get("primary_contact_id")) or {}
+        if not contact.get("email"): continue
+        version = None
+        mv = _d(d.get("stage_changed_at"))
+        if d.get("stage")=="closed_won" and mv and mv >= SEQ_START:
+            version = "magic_castle_cw"                            # Closed-Won version wins if both apply
+        else:
+            _p = d.get("deposit_paid_at"); paid = None
+            if isinstance(_p, datetime.datetime):
+                paid = _p if _p.tzinfo else _p.replace(tzinfo=datetime.timezone.utc)
+            if d.get("deposit_status")=="paid" and paid and _now >= paid + datetime.timedelta(minutes=10) and paid.date() >= SEQ_START:
+                version = "magic_castle"                           # deposit version, ~10 min after paid
+        if not version: continue
+        t = TPL.get(version)
+        if not t: continue
+        V = merge_values(d, contact)
+        subj = fill_subject(t["subject"], V)
+        body = render_html(t["body"], V, signature)
+        atts = attachments.attachments_for("magic_castle", d, contact)
+        mc_due.append((d, contact["email"], subj, body, atts, version, st))
+    print(f"{TODAY}  -  {len(mc_due)} magic castle invite(s) due")
+    for (d, to, subj, body, atts, version, st) in mc_due:
+        print("  -> [magic:%s] %s  |  %s  |  att=%s" % (version, to, subj[:46], [a[0] for a in atts]))
+        if SEND:
+            mailer.send_email(to, subj, body, attachments=atts)
+            st["magic_castle"] = {**(st.get("magic_castle") or {}), "sent": TODAY.isoformat(), "via": version}
+            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+    if SEND and mc_due: print("magic castle invites sent.")
 
     # ---- self gig check-ins: reminders TO Simon about upcoming booked gigs ----
     self_to = mailer.load_config()["from_email"]
