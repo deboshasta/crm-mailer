@@ -213,6 +213,10 @@ def _gcal_email_html(d, V, token, reminder):
                  'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 8px 10px 0">%s</a>' % (html.escape(link), open_lbl))
     b.append('<a href="%s" style="display:inline-block;background:#1f8f5f;color:#fff;text-decoration:none;'
              'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 0 10px 0">STEP 2: SAVE LINK to apt</a>' % html.escape(paste))
+    # horizontal rule, then a link to the CRM record, then all the deal info below (paste-ready)
+    b.append('<hr style="border:0;border-top:1px solid #dcdcdc;margin:18px 0 14px">')
+    b.append('<p style="margin:0 0 6px"><a href="%s/?deal=%s" style="color:#1155cc;font-weight:bold;text-decoration:underline">Open this deal in the CRM &#8594;</a></p>'
+             % (html.escape(CRM_BASE), html.escape(str(d.get("id")))))
     # all the deal info, so Simon can paste it into the calendar appointment
     rows=[("Client", (V.get("ClientFullName") or "-") + (("   "+V["ClientPhone"]) if V.get("ClientPhone") else "")),
           ("When", (V.get("ShowDate") or "-") + ((" at "+stime) if stime else "")),
@@ -221,7 +225,7 @@ def _gcal_email_html(d, V, token, reminder):
           ("Event details", V.get("EventDetails") or "-"),
           ("Format", V.get("FormatDetails") or "-"),
           ("Money", "Fee $%s  -  deposit $%s  -  balance $%s" % (V.get("AppearanceFee") or "?", V.get("DepositAmount") or "0", V.get("BalanceAmount") or "?"))]
-    b.append('<table style="border-collapse:collapse;margin-top:16px;font-size:13px">')
+    b.append('<table style="border-collapse:collapse;margin-top:6px;font-size:13px">')
     for k,val in rows:
         b.append('<tr><td style="padding:3px 16px 3px 0;color:#5f6368;vertical-align:top;white-space:nowrap"><b>%s</b></td>'
                  '<td style="padding:3px 0">%s</td></tr>' % (html.escape(k), html.escape(str(val))))
