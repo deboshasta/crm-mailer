@@ -100,25 +100,30 @@ def _blocked_alert_html(rows):
     return "".join(b)
 
 def _authorize_email_html(rows):
-    """Approval-mode authorize email: each held email gets Approve / Edit / Cancel buttons.
-    rows: [(client_name, key, to, subject, token, deal_id)]."""
+    """Approval-mode authorize email: each held email shows the Approve / Edit / Cancel buttons FIRST,
+    then the recipient, subject, and a preview of the full body.
+    rows: [(client_name, key, to, subject, body, token, deal_id)]."""
     b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
     b.append('<h2 style="margin:0 0 4px">Approve to send</h2>')
     b.append('<p style="color:#5f6368;margin:0 0 16px">These emails are held and will NOT go to the client '
              'until you Approve. Edit opens it in the CRM; Cancel drops it (you can revive it later).</p>')
-    for nm,key,to,subj,token,did in rows:
+    for nm,key,to,subj,body,token,did in rows:
         appr=f"{APPROVE_BASE}?t={token}&a=approve"
         canc=f"{APPROVE_BASE}?t={token}&a=cancel"
         edit=f"{CRM_BASE}/?deal={did}&editemail={key}"
-        b.append('<div style="border:1px solid #e6e6e6;border-radius:10px;padding:14px 16px;margin:0 0 14px">')
-        b.append(f'<div style="color:#5f6368;font-size:12px">To: {html.escape(str(nm))} &lt;{html.escape(str(to))}&gt;</div>')
-        b.append(f'<div style="font-weight:bold;margin:3px 0 12px">{html.escape(str(subj))}</div>')
+        b.append('<div style="border:1px solid #e6e6e6;border-radius:10px;padding:14px 16px;margin:0 0 16px">')
+        # buttons FIRST, above the To field
+        b.append('<div style="margin:0 0 12px">')
         b.append(f'<a href="{html.escape(appr)}" style="display:inline-block;background:#1f8f5f;color:#fff;'
                  'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Approve &amp; send</a>')
         b.append(f'<a href="{html.escape(edit)}" style="display:inline-block;background:#1155cc;color:#fff;'
                  'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Edit</a>')
         b.append(f'<a href="{html.escape(canc)}" style="display:inline-block;background:#b23b3b;color:#fff;'
                  'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 0 8px 0">Cancel</a>')
+        b.append('</div>')
+        b.append(f'<div style="color:#5f6368;font-size:12px">To: {html.escape(str(nm))} &lt;{html.escape(str(to))}&gt;</div>')
+        b.append(f'<div style="font-weight:bold;margin:3px 0 10px">{html.escape(str(subj))}</div>')
+        b.append(f'<div style="border-top:1px solid #eee;padding-top:12px">{body or ""}</div>')   # full body preview (rendered HTML)
         b.append('</div>')
     b.append('</div>')
     return "".join(b)
@@ -371,7 +376,7 @@ def main():
                            "to": contact["email"], "subject": subj, "body": body,
                            "pending_since": e.get("pending_since") or TODAY.isoformat()}
                 if not was_pending:
-                    held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key, contact["email"], subj, token, d["id"]))
+                    held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key, contact["email"], subj, body, token, d["id"]))
                 if SEND:
                     cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
                 continue
