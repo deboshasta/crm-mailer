@@ -419,8 +419,8 @@ def main():
             print(f"  -> [held] {to}  |  [{key}]  {subj[:60]}")
             if SEND:
                 mailer.send_email("simon@thesimonshow.com",
-                                  f"Approval needed: {subj}",
-                                  _authorize_email_html([row]))   # one authorize email per held email
+                                  f"CRM Approval for {nm}: {subj}",
+                                  _authorize_email_html([row]), owner=True)   # one authorize email per held email
 
     # ---- SEND NOW: emails the app flagged for immediate send (cue_state[key].send_now) ----
     # The "Send now" button in the CRM sets cue_state[key].send_now = true and kicks a run.

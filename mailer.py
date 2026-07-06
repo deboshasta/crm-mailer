@@ -28,15 +28,18 @@ def load_config():
         "user": sm.get("smtp_user"), "password": sm.get("smtp_password"),
     }
 
-def send_email(to_email, subject, html_body, reply_to=None, attachments=None):
+def send_email(to_email, subject, html_body, reply_to=None, attachments=None, owner=False):
     """attachments: optional list of (filename, data_bytes, mime_type),
-    e.g. ("Deposit-Receipt.pdf", b"...", "application/pdf")."""
+    e.g. ("Deposit-Receipt.pdf", b"...", "application/pdf").
+    owner=True marks an owner notification already addressed to Simon (approval emails, self check-ins,
+    alerts): no safe-mode reroute and no [SAFE ->] subject tag - it is never a client email."""
     cfg = load_config()
     if not cfg["user"] or not cfg["password"]:
         raise RuntimeError("SMTP not configured yet (private.config smtp_user / smtp_password).")
     # SAFE MODE: redirect the real send to you, tag the intended recipient in the subject
-    real_to = cfg["safe_recipient"] if cfg["safe_mode"] else to_email
-    subj = f"[SAFE -> {to_email}] {subject}" if cfg["safe_mode"] else subject
+    reroute = cfg["safe_mode"] and not owner
+    real_to = cfg["safe_recipient"] if reroute else to_email
+    subj = f"[SAFE -> {to_email}] {subject}" if reroute else subject
 
     msg = EmailMessage()
     msg["From"] = f"{cfg['from_name']} <{cfg['from_email']}>"
