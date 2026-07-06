@@ -368,15 +368,17 @@ def main():
             subj = e["subject"] if e.get("subject") is not None else fill_subject(t["subject"],V)
             body = e["body"] if e.get("body") is not None else render_html(t["body"],V,signature)
             if APPROVAL_MODE:
-                # HOLD for approval: never auto-send. Store the rendered email + a token; Simon approves via
-                # the authorize email (Approve = deliver to client, Edit = CRM, Cancel = drop, all below).
+                # HOLD for approval: never auto-send. Store the email WITHOUT the signature - the authorize
+                # email shows a clean preview, and the signature is added inline (CID image) on Approve so it
+                # renders without "display images". Store a token for the Approve/Cancel links.
                 was_pending = bool(e.get("pending_approval"))
                 token = e.get("approve_token") or secrets.token_urlsafe(24)
+                hbody = e["body"] if e.get("body") is not None else render_html(t["body"], V, "")   # no signature
                 st[key] = {**e, "pending_approval": True, "approve_token": token,
-                           "to": contact["email"], "subject": subj, "body": body,
+                           "to": contact["email"], "subject": subj, "body": hbody,
                            "pending_since": e.get("pending_since") or TODAY.isoformat()}
                 if not was_pending:
-                    held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key, contact["email"], subj, body, token, d["id"]))
+                    held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key, contact["email"], subj, hbody, token, d["id"]))
                 if SEND:
                     cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
                 continue
