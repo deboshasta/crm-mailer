@@ -126,11 +126,16 @@ def _authorize_email_html(rows):
     b.append('<h2 style="margin:0 0 4px">Approve to send</h2>')
     b.append('<p style="color:#5f6368;margin:0 0 16px">These emails are held and will NOT go to the client '
              'until you Approve. Edit opens it in the CRM; Cancel drops it (you can revive it later).</p>')
-    for nm,key,to,subj,body,token,did in rows:
+    for row in rows:
+        nm,key,to,subj,body,token,did = row[:7]
+        note = row[7] if len(row) > 7 else None      # optional plain-language heads-up shown atop the box
         appr=f"{APPROVE_BASE}?t={token}&a=approve"
         canc=f"{APPROVE_BASE}?t={token}&a=cancel"
         edit=f"{CRM_BASE}/?deal={did}&editemail={key}"
         b.append('<div style="border:1px solid #e6e6e6;border-radius:10px;padding:14px 16px;margin:0 0 16px">')
+        if note:
+            b.append('<div style="background:#fff8e1;border:1px solid #f0d48a;border-radius:8px;'
+                     'padding:8px 10px;margin:0 0 12px;color:#7a5c00;font-size:13px">%s</div>' % html.escape(str(note)))
         # buttons FIRST, above the To field
         b.append('<div style="margin:0 0 12px">')
         b.append(f'<a href="{html.escape(appr)}" style="display:inline-block;background:#1f8f5f;color:#fff;'
@@ -604,15 +609,16 @@ def main():
 
     # ---- Magic Castle invite: ONE per deal (shared marker cue_state['magic_castle']). Closed-Won version
     #      fires at Closed Won (priority); deposit version ~10 min after the deposit is marked paid. Whichever
-    #      fires first claims the marker; the other is suppressed. Has an attachment, so it goes via
-    #      mailer.send_email (safe mode routes it to Simon for auth) - NOT the approve/hold flow. ----
+    #      fires first claims the marker; the other is suppressed. It HOLDS for Simon's approval (never
+    #      auto-sends); the PDF is attached when he Approves (attach:'magic_castle'). One authorize email per
+    #      deal (only when it first holds - pending_approval guards re-alerts). ----
     _now = datetime.datetime.now(datetime.timezone.utc)
-    mc_due = []
+    mc_held = 0
     for d in deals:
         st = d.get("cue_state") or {}
         if isinstance(st,str): st=json.loads(st or "{}")
         e = st.get("magic_castle") or {}
-        if e.get("sent") or e.get("cancelled"): continue          # already went (or cancelled) - one per deal
+        if e.get("sent") or e.get("cancelled") or e.get("pending_approval"): continue   # done, cancelled, or already awaiting approval
         contact = CB.get(d.get("primary_contact_id")) or {}
         if not contact.get("email"): continue
         version = None
@@ -630,22 +636,32 @@ def main():
         if not t: continue
         V = merge_values(d, contact)
         subj = fill_subject(t["subject"], V)
-        body = render_html(t["body"], V, signature)
-        atts = attachments.attachments_for("magic_castle", d, contact)
-        mc_due.append((d, contact["email"], subj, body, atts, version, st))
-    print(f"{TODAY}  -  {len(mc_due)} magic castle invite(s) due")
-    for (d, to, subj, body, atts, version, st) in mc_due:
-        print("  -> [magic:%s] %s  |  %s  |  att=%s" % (version, to, subj[:46], [a[0] for a in atts]))
+        hbody = render_html(t["body"], V, "")                      # no signature; added inline on Approve
+        token = secrets.token_urlsafe(24)
+        nm = contact.get("full_name") or d.get("deal_name") or "deal"
+        note = (("Note: this deposit Magic Castle invite is set to get your OK before it sends, because you "
+                 "asked me to hold it for now. When you're ready for it to go out on its own, just tell me."
+                 if version == "magic_castle" else
+                 "Note: this email is newly set to get your OK before it goes to anyone. Once you've seen a few "
+                 "go out and you're happy, just tell me and I'll let it send on its own.")
+                + " The invite PDF attaches automatically when you approve.")
+        st["magic_castle"] = {**e, "pending_approval": True, "approve_token": token,
+                              "to": contact["email"], "subject": subj, "body": hbody,
+                              "attach": "magic_castle", "via": version,
+                              "pending_since": e.get("pending_since") or TODAY.isoformat()}
+        print("  -> [magic:%s HELD] %s  |  %s" % (version, contact["email"], subj[:46]))
         if SEND:
-            mailer.send_email(to, subj, body, attachments=atts)
-            st["magic_castle"] = {**(st.get("magic_castle") or {}), "sent": TODAY.isoformat(), "sent_at": _now_iso(), "via": version}
+            mailer.send_email("simon@thesimonshow.com", f"CRM Approval for {nm}: {subj}",
+                              _authorize_email_html([(nm, "magic_castle", contact["email"], subj, hbody, token, d["id"], note)]),
+                              owner=True)
             cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
-    if SEND and mc_due: print("magic castle invites sent.")
+            mc_held += 1
+    if SEND and mc_held: print(f"magic castle: {mc_held} held for approval (authorize email sent).")
 
-    # ---- W9: on Closed Won for CORPORATE deals (event_type='corporate'), send the W9 once, with its PDF
-    #      attachment. Like the Magic Castle it goes via mailer.send_email (safe mode -> Simon for auth),
-    #      not the CUE/approve flow which can't carry attachments. One per deal (cue_state['w9_email']). ----
-    w9_due = []
+    # ---- W9: on Closed Won for CORPORATE deals (event_type='corporate'). HOLDS for Simon's approval (never
+    #      auto-sends); the W9 PDF is attached when he Approves (attach:'w9_email'). One per deal
+    #      (cue_state['w9_email']); pending_approval guards re-alerts. ----
+    w9_held = 0
     for d in deals:
         if d.get("event_type") != "corporate": continue
         if d.get("stage") != "closed_won": continue
@@ -654,22 +670,31 @@ def main():
         st = d.get("cue_state") or {}
         if isinstance(st,str): st=json.loads(st or "{}")
         e = st.get("w9_email") or {}
-        if e.get("sent") or e.get("cancelled"): continue
+        if e.get("sent") or e.get("cancelled") or e.get("pending_approval"): continue
         contact = CB.get(d.get("primary_contact_id")) or {}
         if not contact.get("email"): continue
         t = TPL.get("w9_email")
         if not t: continue
         V = merge_values(d, contact)
-        w9_due.append((d, contact["email"], fill_subject(t["subject"],V), render_html(t["body"],V,signature),
-                       attachments.attachments_for("w9_email", d, contact), st))
-    print(f"{TODAY}  -  {len(w9_due)} W9 email(s) due (corporate Closed Won)")
-    for (d, to, subj, bodyw, atts, st) in w9_due:
-        print("  -> [w9] %s  |  %s  |  att=%s" % (to, subj[:46], [a[0] for a in atts]))
+        subj = fill_subject(t["subject"], V)
+        hbody = render_html(t["body"], V, "")                 # no signature; added inline on Approve
+        token = secrets.token_urlsafe(24)
+        nm = contact.get("full_name") or d.get("deal_name") or "deal"
+        note = ("Note: this email is newly set to get your OK before it goes to anyone. Once you've seen a few "
+                "go out and you're happy, just tell me and I'll let it send on its own."
+                " The W9 PDF attaches automatically when you approve.")
+        st["w9_email"] = {**e, "pending_approval": True, "approve_token": token,
+                          "to": contact["email"], "subject": subj, "body": hbody,
+                          "attach": "w9_email",
+                          "pending_since": e.get("pending_since") or TODAY.isoformat()}
+        print("  -> [w9 HELD] %s  |  %s" % (contact["email"], subj[:46]))
         if SEND:
-            mailer.send_email(to, subj, bodyw, attachments=atts)
-            st["w9_email"] = {**(st.get("w9_email") or {}), "sent": TODAY.isoformat(), "sent_at": _now_iso()}
+            mailer.send_email("simon@thesimonshow.com", f"CRM Approval for {nm}: {subj}",
+                              _authorize_email_html([(nm, "w9_email", contact["email"], subj, hbody, token, d["id"], note)]),
+                              owner=True)
             cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
-    if SEND and w9_due: print("w9 emails sent.")
+            w9_held += 1
+    if SEND and w9_held: print(f"w9: {w9_held} held for approval (authorize email sent).")
 
     # ---- self gig check-ins: reminders TO Simon about upcoming booked gigs ----
     self_to = mailer.load_config()["from_email"]
