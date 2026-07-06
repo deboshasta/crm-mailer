@@ -413,13 +413,14 @@ def main():
                               f"{len(new_blocks)} email(s) paused - missing info",
                               _blocked_alert_html(new_blocks))
     if held_new:
-        print(f"{TODAY}  -  {len(held_new)} email(s) HELD for approval -> authorize email to Simon")
-        for (nm,key,to,subj,token,did) in held_new:
+        print(f"{TODAY}  -  {len(held_new)} email(s) HELD for approval -> individual authorize emails to Simon")
+        for row in held_new:
+            nm,key,to,subj,body,token,did = row
             print(f"  -> [held] {to}  |  [{key}]  {subj[:60]}")
-        if SEND:
-            mailer.send_email("simon@thesimonshow.com",
-                              f"{len(held_new)} email(s) need your approval",
-                              _authorize_email_html(held_new))
+            if SEND:
+                mailer.send_email("simon@thesimonshow.com",
+                                  f"Approval needed: {subj}",
+                                  _authorize_email_html([row]))   # one authorize email per held email
 
     # ---- SEND NOW: emails the app flagged for immediate send (cue_state[key].send_now) ----
     # The "Send now" button in the CRM sets cue_state[key].send_now = true and kicks a run.
