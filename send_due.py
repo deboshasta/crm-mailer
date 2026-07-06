@@ -4,7 +4,7 @@ aren't cancelled or already sent, and mark them sent. FLAG-mode emails are never
 auto-sent (they are Focus reminders). Dry-run by default; pass --send to actually send.
 Safe-mode still routes every send to Simon until mail_safe_mode is turned off.
 """
-import sys, json, html, re, datetime, urllib.parse
+import sys, json, html, re, datetime, urllib.parse, secrets
 from db import connect
 import mailer
 import tz
@@ -18,6 +18,8 @@ CUSTOMIZE_BASE = "https://www.thesimonshow.com/trivia.html"
 
 # CRM app base for deep-links in notification emails (?deal=<id> opens that deal).
 CRM_BASE = "https://crm.thesimonshow.com"
+# Approval-mode: Approve/Cancel buttons in the authorize email point at this Vercel endpoint.
+APPROVE_BASE = "https://crm-send-the-simon-show.vercel.app/api/approve-email"
 
 # trivia questions (full text) - must match the labels/keys on trivia.html
 TRIVIA_QUESTIONS = [
@@ -95,6 +97,30 @@ def _blocked_alert_html(rows):
                  'text-decoration:none;font-weight:bold;padding:8px 16px;border-radius:8px">Add the missing info</a>')
         b.append('</div>')
     b.append('<p style="color:#9aa0a6;font-size:12px;margin-top:6px">You will also get a daily reminder until it is resolved.</p></div>')
+    return "".join(b)
+
+def _authorize_email_html(rows):
+    """Approval-mode authorize email: each held email gets Approve / Edit / Cancel buttons.
+    rows: [(client_name, key, to, subject, token, deal_id)]."""
+    b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
+    b.append('<h2 style="margin:0 0 4px">Approve to send</h2>')
+    b.append('<p style="color:#5f6368;margin:0 0 16px">These emails are held and will NOT go to the client '
+             'until you Approve. Edit opens it in the CRM; Cancel drops it (you can revive it later).</p>')
+    for nm,key,to,subj,token,did in rows:
+        appr=f"{APPROVE_BASE}?t={token}&a=approve"
+        canc=f"{APPROVE_BASE}?t={token}&a=cancel"
+        edit=f"{CRM_BASE}/?deal={did}&editemail={key}"
+        b.append('<div style="border:1px solid #e6e6e6;border-radius:10px;padding:14px 16px;margin:0 0 14px">')
+        b.append(f'<div style="color:#5f6368;font-size:12px">To: {html.escape(str(nm))} &lt;{html.escape(str(to))}&gt;</div>')
+        b.append(f'<div style="font-weight:bold;margin:3px 0 12px">{html.escape(str(subj))}</div>')
+        b.append(f'<a href="{html.escape(appr)}" style="display:inline-block;background:#1f8f5f;color:#fff;'
+                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Approve &amp; send</a>')
+        b.append(f'<a href="{html.escape(edit)}" style="display:inline-block;background:#1155cc;color:#fff;'
+                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Edit</a>')
+        b.append(f'<a href="{html.escape(canc)}" style="display:inline-block;background:#b23b3b;color:#fff;'
+                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 0 8px 0">Cancel</a>')
+        b.append('</div>')
+    b.append('</div>')
     return "".join(b)
 
 # Self gig check-ins: reminders emailed TO Simon before each booked gig (old GCal! function).
@@ -288,8 +314,14 @@ def main():
     signature=TPL.get("_signature",{}).get("body","")
     cur.execute("select value from private.config where key='sequencer_start'")
     _r=cur.fetchone(); SEQ_START = datetime.date.fromisoformat(_r[0]) if _r and _r[0] else TODAY
+    # APPROVAL MODE: when on, auto emails are HELD (not sent) and Simon approves each via the authorize email.
+    try:
+        cur.execute("select approval_mode from settings where id=1")
+        _am=cur.fetchone(); APPROVAL_MODE=bool(_am and _am[0])
+    except Exception:
+        APPROVAL_MODE=False
 
-    due=[]; blocked_today=[]; new_blocks=[]
+    due=[]; blocked_today=[]; new_blocks=[]; held_new=[]
     for d in deals:
         st = d.get("cue_state") or {}
         if isinstance(st,str): st=json.loads(st or "{}")
@@ -330,6 +362,19 @@ def main():
                 e = {k: v for k, v in e.items() if k != "blocked"}; st[key] = e
             subj = e["subject"] if e.get("subject") is not None else fill_subject(t["subject"],V)
             body = e["body"] if e.get("body") is not None else render_html(t["body"],V,signature)
+            if APPROVAL_MODE:
+                # HOLD for approval: never auto-send. Store the rendered email + a token; Simon approves via
+                # the authorize email (Approve = deliver to client, Edit = CRM, Cancel = drop, all below).
+                was_pending = bool(e.get("pending_approval"))
+                token = e.get("approve_token") or secrets.token_urlsafe(24)
+                st[key] = {**e, "pending_approval": True, "approve_token": token,
+                           "to": contact["email"], "subject": subj, "body": body,
+                           "pending_since": e.get("pending_since") or TODAY.isoformat()}
+                if not was_pending:
+                    held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key, contact["email"], subj, token, d["id"]))
+                if SEND:
+                    cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                continue
             due.append((d,key,contact["email"],subj,body,st))
 
     # CLIENT CADENCE WINDOW (Simon 2026-07-04): only send the due-today client emails between
@@ -356,6 +401,14 @@ def main():
             mailer.send_email("simon@thesimonshow.com",
                               f"{len(new_blocks)} email(s) paused - missing info",
                               _blocked_alert_html(new_blocks))
+    if held_new:
+        print(f"{TODAY}  -  {len(held_new)} email(s) HELD for approval -> authorize email to Simon")
+        for (nm,key,to,subj,token,did) in held_new:
+            print(f"  -> [held] {to}  |  [{key}]  {subj[:60]}")
+        if SEND:
+            mailer.send_email("simon@thesimonshow.com",
+                              f"{len(held_new)} email(s) need your approval",
+                              _authorize_email_html(held_new))
 
     # ---- SEND NOW: emails the app flagged for immediate send (cue_state[key].send_now) ----
     # The "Send now" button in the CRM sets cue_state[key].send_now = true and kicks a run.
