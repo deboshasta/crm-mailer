@@ -49,3 +49,9 @@ jobs:
           printf '%s' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
       - name: Run backup
         run: python backup.py
+      - name: Alert Simon on failure
+        if: failure()
+        env:
+          FAIL_LABEL: "database backup"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python notify_fail.py

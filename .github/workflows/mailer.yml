@@ -57,3 +57,9 @@ jobs:
         run: python likely_no_nag.py --send
       - name: Proposal-not-sent self-nag
         run: python proposal_notsent_nag.py --send
+      - name: Alert Simon on failure
+        if: failure()
+        env:
+          FAIL_LABEL: "mailer sweep"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python notify_fail.py

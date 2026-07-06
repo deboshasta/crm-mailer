@@ -31,3 +31,9 @@ jobs:
         run: pip install -r requirements.txt
       - name: Blocked-email daily nag
         run: python blocked_digest.py --send
+      - name: Alert Simon on failure
+        if: failure()
+        env:
+          FAIL_LABEL: "blocked-email digest"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python notify_fail.py

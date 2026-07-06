@@ -362,6 +362,18 @@ def anchor_date(deal, anchor, stages):
 
 def main():
     c=connect(); c.autocommit=True; cur=c.cursor()
+    # PHASE-1 RESILIENCE: never let one bad send crash the whole run. Every mailer.send_email goes through a
+    # wrapper that catches errors, records them, and keeps going; a summary is emailed to Simon at the end.
+    _orig_send = mailer.send_email
+    _send_fails = []
+    def _safe_send(to, subj, body, **kw):
+        try:
+            return _orig_send(to, subj, body, **kw)
+        except Exception as _e:
+            _send_fails.append((str(to), str(subj), str(_e)[:300]))
+            print("  !! SEND FAILED:", to, "-", str(_e)[:200])
+            return None
+    mailer.send_email = _safe_send   # covers every send site in this run without touching each call
     cols_d=["id","stage","show_date","show_time","venue_address","occasion","company","guest_of_honor",
             "proposal_link","audience_details","show_format","amount","deposit_amount","balance_amount",
             "event_type","is_repeat","customize_token","trivia","trivia_received_at","trivia_notified_at",
@@ -734,6 +746,20 @@ def main():
             mailer.send_email(photo_to, subj, body)
             cur.execute("update deals set photos_notified_at=now() where id=%s", (d["id"],))
     if SEND and photo_due: print("photo notifications sent + marked.")
+
+    # PHASE-1: if any individual send failed above, email Simon one summary (the run itself did not crash).
+    if SEND and _send_fails:
+        _body = ('<div style="font-family:sans-serif;font-size:14px;color:#111">'
+                 '<p>&#9888; <b>%d email send(s) failed</b> in this run (the sweep kept going and finished):</p><ul>'
+                 % len(_send_fails)
+                 + "".join('<li>%s &middot; %s<br><span style="color:#c0392b;font-size:12px">%s</span></li>'
+                           % (html.escape(t), html.escape(s), html.escape(e)) for t,s,e in _send_fails)
+                 + '</ul></div>')
+        try:
+            _orig_send("simon@thesimonshow.com", "[CRM] %d email send(s) FAILED" % len(_send_fails), _body, owner=True)
+            print("failure-summary email sent.")
+        except Exception as _ex:
+            print("failure-summary email ALSO failed:", _ex)
     c.close()
 
 if __name__=="__main__":
