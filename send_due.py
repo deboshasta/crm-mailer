@@ -41,8 +41,8 @@ CUE = [
     ("deposit_chase_1","stage",2,"flag",("booked","closed_won")),
     ("deposit_chase_2","stage",7,"flag",("booked","closed_won")),
     ("balance_reminder","show",-2,"flag",("booked","closed_won")),
-    ("thank_you","show",1,"window",("closed_won",)),
-    ("review_request","show",2,"window",("closed_won",)),
+    ("thank_you","show",1,"auto",("closed_won",)),
+    ("review_request","show",2,"auto",("closed_won",)),
     ("popped_into","show",14,"flag",("closed_won",)),
     ("rebook","show",240,"flag",("closed_won",)),
     ("pf_fu1","proposal_sent",3,"auto",("proposal_sent",)),
@@ -61,7 +61,7 @@ CUE = [
     ("refer_won_daybefore","show",-1,"auto",("refer_won",)),
     ("refer_won_after","show",2,"auto",("refer_won",)),
 ]
-AUTO_MODES = ("auto","window")
+AUTO_MODES = ("auto",)   # 'window' mode retired -> folded into 'auto' (they always behaved identically)
 
 # Self gig check-ins: reminders emailed TO Simon before each booked gig (old GCal! function).
 # (days_before_show, label). Best-guess cadence - adjust freely.
