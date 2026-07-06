@@ -58,11 +58,14 @@ def do_backup():
          "--passphrase", GPG_PASS, "--symmetric", "--cipher-algo", "AES256",
          "-o", ENC, DUMP])
     enc_size = os.path.getsize(ENC)
-    # 3) upload as a GitHub Release asset (gh is preinstalled on runners; GH_TOKEN in env)
+    # 3) VERIFY the encrypted artifact is actually restorable BEFORE we keep it (a backup you can't
+    #    restore is not a backup): decrypt it back + pg_restore --list. Raises if it looks empty/corrupt.
+    verified = verify()
+    # 4) upload as a GitHub Release asset (gh is preinstalled on runners; GH_TOKEN in env)
     run(["gh", "release", "create", TAG, ENC, "--repo", REPO,
          "--title", "DB backup %s" % STAMP,
-         "--notes", "Encrypted pg_dump (custom format). %d bytes." % enc_size])
-    # 4) optional Google Drive copy via rclone
+         "--notes", "Encrypted pg_dump (custom format). %d bytes. Verified: %s." % (enc_size, verified)])
+    # 5) optional Google Drive copy via rclone
     drive = ""
     if RCLONE_REMOTE:
         try:
@@ -70,9 +73,26 @@ def do_backup():
             drive = " Also copied to Google Drive (%s)." % RCLONE_REMOTE
         except Exception as e:
             drive = " (Google Drive copy FAILED: %s)" % str(e)[:200]
-    # 5) prune old releases
+    # 6) prune old releases
     pruned = prune_old()
-    return "Encrypted backup %s uploaded (%d bytes).%s Pruned %d old backup(s)." % (ENC, enc_size, drive, pruned)
+    return "Verified restorable (%s). Encrypted backup %s uploaded (%d bytes).%s Pruned %d old backup(s)." % (verified, ENC, enc_size, drive, pruned)
+
+def verify():
+    """Decrypt the just-made encrypted backup and pg_restore --list it, to prove it is a real,
+    non-corrupt, restorable dump. Returns a short metric; raises if the table-of-contents looks empty."""
+    dec = "verify-%s.dump" % STAMP
+    run(["gpg", "--batch", "--yes", "--pinentry-mode", "loopback",
+         "--passphrase", GPG_PASS, "--decrypt", "-o", dec, ENC])
+    out = run(["pg_restore", "--list", dec])
+    try:
+        os.remove(dec)
+    except Exception:
+        pass
+    entries = [l for l in out.splitlines() if l.strip() and not l.lstrip().startswith(";")]
+    tabledata = sum(1 for l in entries if " TABLE DATA " in l)
+    if len(entries) < 10 or tabledata < 1:
+        raise RuntimeError("verify FAILED: dump index looks empty (%d objects, %d table-data)" % (len(entries), tabledata))
+    return "%d objects, %d tables with data" % (len(entries), tabledata)
 
 def prune_old():
     out = run(["gh", "release", "list", "--repo", REPO, "--limit", "300", "--json", "tagName,createdAt"])
