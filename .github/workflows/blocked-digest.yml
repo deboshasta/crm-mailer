@@ -1,0 +1,33 @@
+name: CRM blocked-email nag
+
+# Once a day, email Simon every AUTO email that send_due.py has PAUSED for a blank merge field,
+# each with a button to fill it in. Runs on its own daily cron (separate from the 20-min sweep)
+# so the nag lands exactly once a day. The pause + auto-send-when-fixed lives in send_due.py.
+
+on:
+  schedule:
+    - cron: '0 13 * * *'      # ~9am ET (EDT) / ~8am ET (EST)
+  workflow_dispatch:
+
+concurrency:
+  group: crm-blocked-digest
+  cancel-in-progress: false
+
+jobs:
+  nag:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      DB_PASSWORD:  ${{ secrets.DB_PASSWORD }}
+      DB_HOST:      ${{ vars.DB_HOST }}
+      DB_USER:      ${{ vars.DB_USER }}
+      DB_PORT:      ${{ vars.DB_PORT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Blocked-email daily nag
+        run: python blocked_digest.py --send

@@ -63,6 +63,22 @@ CUE = [
 ]
 AUTO_MODES = ("auto",)   # 'window' mode retired -> folded into 'auto' (they always behaved identically)
 
+# ---- Missing-field guard ---------------------------------------------------
+# An AUTO email is PAUSED (not sent) when the template uses a {{merge field}} that is blank for
+# this deal, so a client never receives an email with a hole in it. The pause is recorded on
+# cue_state[key].blocked = {"since": iso, "fields": [...]}. blocked_digest.py nags Simon once a
+# day until it is filled (then the email auto-sends, see the re-check pass) or cancelled.
+# OPTIONAL fields are legitimately often-blank and never block (kept in sync with check_missing.py).
+OPTIONAL_FIELDS = {"Company", "GuestOfHonor", "ProposalLink", "LastShowYear"}
+def _tpl_fields(t):
+    return set(re.findall(r"\{\{(\w+)\}\}", (t.get("subject") or "") + " " + (t.get("body") or "")))
+def missing_fields(t, e, V):
+    """Blank required merge fields for this template+deal. Returns [] when Simon wrote a manual
+    override (e.subject / e.body) - a hand-written email is assumed complete."""
+    if (e.get("subject") is not None) or (e.get("body") is not None):
+        return []
+    return sorted(f for f in _tpl_fields(t) if not V.get(f) and f not in OPTIONAL_FIELDS)
+
 # Self gig check-ins: reminders emailed TO Simon before each booked gig (old GCal! function).
 # (days_before_show, label). Best-guess cadence - adjust freely.
 SELF_CHECKINS = [(7,"in 1 week"), (3,"in 3 days"), (1,"tomorrow"), (0,"TODAY")]
@@ -241,10 +257,11 @@ def main():
     cur.execute("select value from private.config where key='sequencer_start'")
     _r=cur.fetchone(); SEQ_START = datetime.date.fromisoformat(_r[0]) if _r and _r[0] else TODAY
 
-    due=[]
+    due=[]; blocked_today=[]
     for d in deals:
         st = d.get("cue_state") or {}
         if isinstance(st,str): st=json.loads(st or "{}")
+        d["cue_state"]=st   # make in-memory cue_state the single source of truth across the passes below
         contact = CB.get(d.get("primary_contact_id")) or {}
         if _d(d.get("created_at")) < SEQ_START: continue   # go-live cutoff: never backfill pre-existing deals
         for (key,anchor,off,mode,stages) in CUE:
@@ -265,6 +282,17 @@ def main():
             if e.get("sent") or e.get("cancelled"): continue
             if not contact.get("email"): continue
             V=merge_values(d,contact)
+            blanks = missing_fields(t, e, V)
+            if blanks:
+                # PAUSE: a required merge field is blank -> do NOT send. Flag it so blocked_digest.py
+                # nags Simon daily and the re-check pass below auto-sends it once the field is filled.
+                st[key] = {**e, "blocked": {"since": (e.get("blocked") or {}).get("since", TODAY.isoformat()), "fields": blanks}}
+                blocked_today.append((d, key, contact["email"], blanks))
+                if SEND:
+                    cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                continue
+            if e.get("blocked"):                          # was paused, now complete -> clear the flag before sending
+                e = {k: v for k, v in e.items() if k != "blocked"}; st[key] = e
             subj = e["subject"] if e.get("subject") is not None else fill_subject(t["subject"],V)
             body = e["body"] if e.get("body") is not None else render_html(t["body"],V,signature)
             due.append((d,key,contact["email"],subj,body,st))
@@ -280,9 +308,13 @@ def main():
         print(f"  -> {to}  |  [{key}]  {subj[:70]}")
         if SEND and _cad_ok:
             mailer.send_email(to, subj, body)
-            st[key]={**(st.get(key) or {}), "sent":TODAY.isoformat()}
+            ne={**(st.get(key) or {}), "sent":TODAY.isoformat()}; ne.pop("blocked",None); st[key]=ne
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
     if SEND and _cad_ok and due: print("marked sent + saved.")
+    if blocked_today:
+        print(f"{TODAY}  -  {len(blocked_today)} auto email(s) PAUSED for missing fields:")
+        for (d,key,to,blanks) in blocked_today:
+            print(f"  -> [paused] {to}  |  [{key}]  missing: {', '.join(blanks)}")
 
     # ---- SEND NOW: emails the app flagged for immediate send (cue_state[key].send_now) ----
     # The "Send now" button in the CRM sets cue_state[key].send_now = true and kicks a run.
@@ -313,6 +345,46 @@ def main():
             st[key]=ne
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
     if SEND and now_due: print("send-now emails sent + flags cleared.")
+
+    # ---- BLOCKED re-check: emails paused for a missing field. Auto-send any that are now complete
+    #      (Simon filled the field), keep the rest paused (blocked_digest.py nags him daily). Runs
+    #      regardless of the original send date, so a fixed email still goes out even a day or two
+    #      late; a stale one Simon no longer wants is stopped with the cue's Cancel (x) button. ----
+    unblock=[]
+    for d in deals:
+        st = d.get("cue_state") or {}
+        if isinstance(st,str): st=json.loads(st or "{}")
+        d["cue_state"]=st
+        contact = CB.get(d.get("primary_contact_id")) or {}
+        for key, e in list(st.items()):
+            if not isinstance(e, dict) or not e.get("blocked"): continue
+            if e.get("sent") or e.get("cancelled"):        # already handled -> drop the stale flag
+                e.pop("blocked",None); st[key]=e
+                if SEND: cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
+                continue
+            t=TPL.get(key)
+            if not t: continue
+            to=(e.get("to") or contact.get("email") or "").strip()
+            if not to: continue
+            V=merge_values(d,contact)
+            blanks = missing_fields(t, e, V)
+            if blanks:                                     # still missing -> stay paused, refresh field list if it changed
+                if (e.get("blocked") or {}).get("fields") != blanks:
+                    e["blocked"]={"since":(e.get("blocked") or {}).get("since",TODAY.isoformat()),"fields":blanks}; st[key]=e
+                    if SEND: cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
+                continue
+            subj = e["subject"] if e.get("subject") is not None else fill_subject(t["subject"],V)
+            body = e["body"] if e.get("body") is not None else render_html(t["body"],V,signature)
+            unblock.append((d,key,to,subj,body,st))
+    print(f"{TODAY}  -  {len(unblock)} paused email(s) now complete -> sending")
+    for (d,key,to,subj,body,st) in unblock:
+        print(f"  -> [unblocked] {to}  |  [{key}]  {subj[:60]}")
+        if SEND:
+            mailer.send_email(to,subj,body)
+            ne={**(st.get(key) or {}), "sent":TODAY.isoformat()}; ne.pop("blocked",None); ne.pop("send_now",None)
+            st[key]=ne
+            cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
+    if SEND and unblock: print("unblocked emails sent.")
 
     # ---- self gig check-ins: reminders TO Simon about upcoming booked gigs ----
     self_to = mailer.load_config()["from_email"]
