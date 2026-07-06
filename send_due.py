@@ -208,11 +208,11 @@ def _gcal_email_html(d, V, token, reminder):
     b.append('<h2 style="margin:0 0 4px">Add to calendar: %s</h2>' % html.escape(str(who)))
     b.append('<p style="color:#5f6368;margin:0 0 14px">%s%s</p>' % (html.escape(str(when)), (" at "+html.escape(stime)) if stime else ""))
     if link:
-        open_lbl = "Open your event" if d.get("gcal_url") else "Open calendar to create appointment"
+        open_lbl = "Open your event" if d.get("gcal_url") else "STEP 1: Copy info below to GCal"
         b.append('<a href="%s" style="display:inline-block;background:#1155cc;color:#fff;text-decoration:none;'
                  'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 8px 10px 0">%s</a>' % (html.escape(link), open_lbl))
     b.append('<a href="%s" style="display:inline-block;background:#1f8f5f;color:#fff;text-decoration:none;'
-             'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 0 10px 0">Update GCal link</a>' % html.escape(paste))
+             'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 0 10px 0">STEP 2: SAVE LINK to apt</a>' % html.escape(paste))
     # all the deal info, so Simon can paste it into the calendar appointment
     rows=[("Client", (V.get("ClientFullName") or "-") + (("   "+V["ClientPhone"]) if V.get("ClientPhone") else "")),
           ("When", (V.get("ShowDate") or "-") + ((" at "+stime) if stime else "")),
