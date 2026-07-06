@@ -525,12 +525,15 @@ def main():
             subj = e["subject"] if e.get("subject") is not None else (fill_subject(t["subject"],V) if t else None)
             body = e["body"]    if e.get("body")    is not None else (render_html(t["body"],V,signature) if t else None)
             if subj is None or body is None: continue   # no template and no override -> nothing to send
-            now_due.append((d,key,to,subj,body,st))
+            # exempt from safe mode: e.no_safe (owner SMS/notifications) + the new-lead inquiry confirmation
+            # (_newlead_client_*) - a transactional auto-reply that must reach the lead, not reroute to Simon.
+            no_safe = bool(e.get("no_safe")) or key.startswith("_newlead_client_")
+            now_due.append((d,key,to,subj,body,st,no_safe))
     print(f"{TODAY}  -  {len(now_due)} send-now email(s)  (mode: {'SEND' if SEND else 'DRY-RUN'})")
-    for (d,key,to,subj,body,st) in now_due:
-        print(f"  -> [now] {to}  |  [{key}]  {subj[:70]}")
+    for (d,key,to,subj,body,st,no_safe) in now_due:
+        print(f"  -> [now] {to}  |  [{key}]  {subj[:70]}{'  [no-safe]' if no_safe else ''}")
         if SEND:
-            mailer.send_email(to, subj, body)
+            mailer.send_email(to, subj, body, owner=no_safe)
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("send_now",None)
             st[key]=ne
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
