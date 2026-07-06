@@ -9,9 +9,15 @@ from db import connect
 import mailer
 import tz
 import attachments
+import heartbeat
 
 SEND = "--send" in sys.argv
 TODAY = tz.today()          # Eastern "today" so cloud (UTC) runs match Simon's local day
+
+def _now_iso():
+    """Absolute send instant (UTC, with offset) stored alongside the 'sent' date so the app can show
+    the sent TIME. UTC so it's unambiguous; the app converts it to Eastern for display."""
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 # per-deal customization/trivia form base (must match app.js CUSTOMIZE_BASE).
 # Update to the real deployed host at go-live.
@@ -472,7 +478,7 @@ def main():
         print(f"  -> {to}  |  [{key}]  {subj[:70]}")
         if SEND and _cad_ok:
             mailer.send_email(to, subj, body)
-            ne={**(st.get(key) or {}), "sent":TODAY.isoformat()}; ne.pop("blocked",None); st[key]=ne
+            ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("blocked",None); st[key]=ne
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
     if SEND and _cad_ok and due: print("marked sent + saved.")
     if blocked_today:
@@ -520,7 +526,7 @@ def main():
         print(f"  -> [now] {to}  |  [{key}]  {subj[:70]}")
         if SEND:
             mailer.send_email(to, subj, body)
-            ne={**(st.get(key) or {}), "sent":TODAY.isoformat()}; ne.pop("send_now",None)
+            ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("send_now",None)
             st[key]=ne
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
     if SEND and now_due: print("send-now emails sent + flags cleared.")
@@ -560,7 +566,7 @@ def main():
         print(f"  -> [unblocked] {to}  |  [{key}]  {subj[:60]}")
         if SEND:
             mailer.send_email(to,subj,body)
-            ne={**(st.get(key) or {}), "sent":TODAY.isoformat()}; ne.pop("blocked",None); ne.pop("send_now",None)
+            ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("blocked",None); ne.pop("send_now",None)
             st[key]=ne
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
     if SEND and unblock: print("unblocked emails sent.")
@@ -632,7 +638,7 @@ def main():
         print("  -> [magic:%s] %s  |  %s  |  att=%s" % (version, to, subj[:46], [a[0] for a in atts]))
         if SEND:
             mailer.send_email(to, subj, body, attachments=atts)
-            st["magic_castle"] = {**(st.get("magic_castle") or {}), "sent": TODAY.isoformat(), "via": version}
+            st["magic_castle"] = {**(st.get("magic_castle") or {}), "sent": TODAY.isoformat(), "sent_at": _now_iso(), "via": version}
             cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
     if SEND and mc_due: print("magic castle invites sent.")
 
@@ -661,7 +667,7 @@ def main():
         print("  -> [w9] %s  |  %s  |  att=%s" % (to, subj[:46], [a[0] for a in atts]))
         if SEND:
             mailer.send_email(to, subj, bodyw, attachments=atts)
-            st["w9_email"] = {**(st.get("w9_email") or {}), "sent": TODAY.isoformat()}
+            st["w9_email"] = {**(st.get("w9_email") or {}), "sent": TODAY.isoformat(), "sent_at": _now_iso()}
             cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
     if SEND and w9_due: print("w9 emails sent.")
 
@@ -692,7 +698,7 @@ def main():
             cur.execute("select cue_state from deals where id=%s",(d["id"],))   # read-modify-write (avoid clobber)
             cs=cur.fetchone()[0] or {}
             if isinstance(cs,str): cs=json.loads(cs or "{}")
-            cs[key]={"sent":TODAY.isoformat()}
+            cs[key]={"sent":TODAY.isoformat(), "sent_at":_now_iso()}
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(cs),d["id"]))
     if SEND and self_due: print("self check-ins sent + marked.")
 
@@ -760,6 +766,15 @@ def main():
             print("failure-summary email sent.")
         except Exception as _ex:
             print("failure-summary email ALSO failed:", _ex)
+
+    # HEARTBEAT (Phase 2): record that the mailer ran, and cross-check the backup stamp so a dead
+    # nightly backup is caught within a sweep (not just by the dedicated heartbeat cron). Best-effort.
+    if SEND:
+        try:
+            heartbeat.stamp(cur, "mailer")
+            heartbeat.check(cur, "backup")
+        except Exception as _hx:
+            print("heartbeat (mailer) failed:", _hx)
     c.close()
 
 if __name__=="__main__":

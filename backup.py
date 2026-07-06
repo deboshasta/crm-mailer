@@ -138,10 +138,25 @@ def notify(ok, detail):
     except Exception as e:
         print("notify failed:", e)
 
+def heartbeat_stamp():
+    """Record a successful backup for the dead-man's switch, and cross-check the mailer stamp so a
+    dead sweep is caught by the nightly backup too. Best-effort - never fails the backup."""
+    try:
+        import heartbeat
+        from db import connect
+        c = connect(); cur = c.cursor()
+        heartbeat.stamp(cur, "backup")
+        heartbeat.check(cur, "mailer")
+        c.commit(); c.close()
+        print("heartbeat: backup stamped + mailer checked")
+    except Exception as e:
+        print("heartbeat (backup) failed:", e)
+
 if __name__ == "__main__":
     try:
         detail = do_backup()
         notify(True, detail)
+        heartbeat_stamp()
         print("backup OK:", detail)
     except Exception:
         tb = traceback.format_exc()
