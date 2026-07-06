@@ -26,6 +26,14 @@ HOST  = _cfg("DB_HOST") or ("db.%s.supabase.co" % REF)
 USER  = _cfg("DB_USER") or "postgres"
 # pg_dump needs a SESSION connection; Supabase's session pooler is on 5432 (transaction pooler = 6543)
 PORT  = "5432"
+# pg_dump and pg_restore MUST come from the same major version, or verify() fails with
+# "unsupported version (x.xx) in file header" (a PG17 dump can't be read by an older pg_restore).
+# The bare names on a GitHub runner can resolve to different versions after an image roll, so pin
+# both to the version we install (17). Falls back to PATH if that dir is absent (e.g. local Windows).
+PG_BIN = _cfg("PG_BIN") or "/usr/lib/postgresql/17/bin"
+def _pg(name):
+    p = os.path.join(PG_BIN, name)
+    return p if os.path.exists(p) else name
 GPG_PASS   = _cfg("GPG_PASSPHRASE")
 REPO       = _cfg("GITHUB_REPOSITORY")
 KEEP_DAYS  = int(_cfg("BACKUP_KEEP_DAYS") or "30")
@@ -48,7 +56,7 @@ def do_backup():
         raise RuntimeError("missing one of SUPABASE_URL / DB_PASSWORD / GPG_PASSPHRASE / GITHUB_REPOSITORY")
     # 1) dump (custom format, no owner/privs so it restores cleanly into any DB)
     env = dict(os.environ, PGPASSWORD=PW)
-    run(["pg_dump", "-h", HOST, "-p", PORT, "-U", USER, "-d", "postgres",
+    run([_pg("pg_dump"), "-h", HOST, "-p", PORT, "-U", USER, "-d", "postgres",
          "--no-owner", "--no-privileges", "-Fc", "-f", DUMP], env=env)
     size = os.path.getsize(DUMP)
     if size < 10000:
@@ -83,7 +91,7 @@ def verify():
     dec = "verify-%s.dump" % STAMP
     run(["gpg", "--batch", "--yes", "--pinentry-mode", "loopback",
          "--passphrase", GPG_PASS, "--decrypt", "-o", dec, ENC])
-    out = run(["pg_restore", "--list", dec])
+    out = run([_pg("pg_restore"), "--list", dec])
     try:
         os.remove(dec)
     except Exception:
