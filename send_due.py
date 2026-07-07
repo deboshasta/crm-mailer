@@ -227,20 +227,29 @@ def _gcal_email_html(d, V, token, reminder):
              'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 0 10px 0">STEP 2: SAVE LINK to apt</a>' % html.escape(paste))
     # horizontal rule, then the paste-ready info box (the CRM record link lives INSIDE the box, top line)
     b.append('<hr style="border:0;border-top:1px solid #dcdcdc;margin:18px 0 14px">')
-    # all the deal info, so Simon can paste it into the calendar appointment
-    rows=[("Client", (V.get("ClientFullName") or "-") + (("   "+V["ClientPhone"]) if V.get("ClientPhone") else "")),
-          ("When", (V.get("ShowDate") or "-") + ((" at "+stime) if stime else "")),
-          ("Venue", V.get("Venue") or "(not set)"),
-          ("Occasion", V.get("Occasion") or "-"),
-          ("Event details", V.get("EventDetails") or "-"),
-          ("Format", V.get("FormatDetails") or "-"),
-          ("Money", "Fee $%s  -  deposit $%s  -  balance $%s" % (V.get("AppearanceFee") or "?", V.get("DepositAmount") or "0", V.get("BalanceAmount") or "?"))]
+    # all the deal info, so Simon can paste it into the calendar appointment.
     # Each line is its own <div> (block) - NOT a <pre> - so the breaks survive Google Calendar's SAVE
-    # round-trip when Simon pastes this into an event description. (<pre> newlines render on paste but
-    # collapse to a single line when GCal saves, since it drops <pre> and HTML collapses whitespace.)
+    # round-trip when Simon pastes this into an event description (a <pre> collapses to one line on save).
     _lst = "font-family:Verdana,Arial,sans-serif;font-size:13px;line-height:1.5;color:#202124;margin:0"
     def _line(t): return '<div style="%s">%s</div>' % (_lst, t)
-    info_divs = "".join(_line(html.escape("%s: %s" % (k, val))) for k, val in rows)
+    def _a(href, txt): return '<a href="%s" style="color:#1155cc;text-decoration:underline">%s</a>' % (html.escape(href), html.escape(txt))
+    def _tel_href(s):
+        parts = re.split(r"(?i)\s*(?:x|ext\.?)\s*", str(s or ""), maxsplit=1)   # split off any extension
+        num = re.sub(r"[^\d+]", "", parts[0] if parts else "")
+        ext = re.sub(r"[^\d]", "", parts[1]) if len(parts) > 1 else ""
+        return ("tel:%s%s" % (num, ("," + ext) if ext else "")) if num else ""
+    phone = V.get("ClientPhone") or ""; email = V.get("ClientEmail") or ""
+    client_html = (html.escape(V.get("ClientFullName") or "-")
+                   + (("   " + (_a(_tel_href(phone), phone) if _tel_href(phone) else html.escape(phone))) if phone else "")   # phone -> tel:
+                   + (("   " + _a("mailto:" + email, email)) if email else ""))                                              # email -> mailto:
+    rows = [("Client", client_html),                              # value is HTML; the rest are plain-escaped below
+            ("When", html.escape((V.get("ShowDate") or "-") + ((" at " + stime) if stime else ""))),
+            ("Venue", html.escape(V.get("Venue") or "(not set)")),
+            ("Occasion", html.escape(V.get("Occasion") or "-")),
+            ("Event details", html.escape(V.get("EventDetails") or "-")),
+            ("Format", html.escape(V.get("FormatDetails") or "-")),
+            ("Money", html.escape("Fee $%s  -  deposit $%s  -  balance $%s" % (V.get("AppearanceFee") or "?", V.get("DepositAmount") or "0", V.get("BalanceAmount") or "?")))]
+    info_divs = "".join(_line(html.escape(k) + ": " + val) for k, val in rows)
     crm_link = ('<a href="%s/?deal=%s" style="color:#1155cc;font-weight:bold;text-decoration:underline">'
                 '&#128187; Open this deal in the CRM &#8594;</a>'
                 % (html.escape(CRM_BASE), html.escape(str(d.get("id")))))
