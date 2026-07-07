@@ -8,7 +8,7 @@ import send_due, mailer
 
 WINDOW = 3
 TODAY = datetime.date.today()
-OPTIONAL = {"Company", "GuestOfHonor", "ProposalLink", "LastShowYear"}  # legitimately-often-blank
+OPTIONAL = {"Company", "GuestOfHonor", "ProposalLink", "LastShowYear", "EventDetails"}  # legitimately-often-blank (keep in sync with send_due.OPTIONAL_FIELDS)
 
 def main():
     c = connect(); cur = c.cursor()
