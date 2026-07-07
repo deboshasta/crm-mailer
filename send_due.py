@@ -138,7 +138,8 @@ def _authorize_email_html(rows):
     b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
     b.append('<h2 style="margin:0 0 4px">Approve to send</h2>')
     b.append('<p style="color:#5f6368;margin:0 0 16px">These emails are held and will NOT go to the client '
-             'until you Approve. Edit opens it in the CRM; Cancel drops it (you can revive it later).</p>')
+             'until you act. <b>Preview &amp; Send</b> opens it in the CRM to review/tweak first; <b>Send</b> '
+             'delivers it as-is; <b>Cancel</b> drops it (you can revive it later).</p>')
     for row in rows:
         nm,key,to,subj,body,token,did = row[:7]
         note = row[7] if len(row) > 7 else None      # optional plain-language heads-up shown atop the box
@@ -151,11 +152,11 @@ def _authorize_email_html(rows):
                      'padding:8px 10px;margin:0 0 12px;color:#7a5c00;font-size:13px">%s</div>' % html.escape(str(note)))
         # buttons FIRST, above the To field
         b.append('<div style="margin:0 0 12px">')
-        b.append(f'<a href="{html.escape(edit)}" style="display:inline-block;background:#1155cc;color:#fff;'
+        b.append(f'<a href="{html.escape(edit)}" style="display:inline-block;background:#1f8f5f;color:#fff;'
                  'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Preview &amp; Send</a>')
         b.append(f'<a href="{html.escape(canc)}" style="display:inline-block;background:#b23b3b;color:#fff;'
                  'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Cancel</a>')
-        b.append(f'<a href="{html.escape(appr)}" style="display:inline-block;background:#1f8f5f;color:#fff;'
+        b.append(f'<a href="{html.escape(appr)}" style="display:inline-block;background:#6b7280;color:#fff;'
                  'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 0 8px 0">Send</a>')
         b.append('</div>')
         b.append(f'<div style="color:#5f6368;font-size:12px">To: {html.escape(str(nm))} &lt;{html.escape(str(to))}&gt;</div>')
