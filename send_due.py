@@ -235,25 +235,26 @@ def _gcal_email_html(d, V, token, reminder):
           ("Event details", V.get("EventDetails") or "-"),
           ("Format", V.get("FormatDetails") or "-"),
           ("Money", "Fee $%s  -  deposit $%s  -  balance $%s" % (V.get("AppearanceFee") or "?", V.get("DepositAmount") or "0", V.get("BalanceAmount") or "?"))]
-    # single preformatted block: select it all + paste straight into the calendar appointment (no table
-    # artifacts), or grab one line on its own. <pre> keeps the line breaks on copy; pre-wrap wraps long lines.
-    info = "\n".join("%s: %s" % (k, val) for k, val in rows)
+    # Each line is its own <div> (block) - NOT a <pre> - so the breaks survive Google Calendar's SAVE
+    # round-trip when Simon pastes this into an event description. (<pre> newlines render on paste but
+    # collapse to a single line when GCal saves, since it drops <pre> and HTML collapses whitespace.)
+    _lst = "font-family:Verdana,Arial,sans-serif;font-size:13px;line-height:1.5;color:#202124;margin:0"
+    def _line(t): return '<div style="%s">%s</div>' % (_lst, t)
+    info_divs = "".join(_line(html.escape("%s: %s" % (k, val))) for k, val in rows)
     crm_link = ('<a href="%s/?deal=%s" style="color:#1155cc;font-weight:bold;text-decoration:underline">'
                 'Open this deal in the CRM &#8594;</a>'
                 % (html.escape(CRM_BASE), html.escape(str(d.get("id")))))
-    # right under the deal link: a car emoji + the venue address (plain text), the whole line
-    # clickable -> Google Maps search for that address. Only when a venue address is set.
+    # right under the deal link: a car emoji + the venue address, the whole line clickable -> Google Maps.
     venue_raw = (V.get("Venue") or "").strip()
-    car_line = ""
+    car_div = ""
     if venue_raw:
         maps_url = "https://www.google.com/maps?q=" + urllib.parse.quote_plus(venue_raw)
-        car_line = ('\n<a href="%s" style="color:#1155cc;text-decoration:underline">&#128663; %s</a>'
-                    % (html.escape(maps_url), html.escape(venue_raw)))
-    # crm_link + car_line are intentionally unescaped (they render as clickable links); the info is escaped.
-    b.append('<pre style="font-family:Verdana,Arial,sans-serif;font-size:13px;line-height:1.55;'
-             'white-space:pre-wrap;word-break:break-word;background:#f6f7f9;border:1px solid #dcdcdc;'
-             'border-radius:8px;padding:12px 14px;margin:6px 0 0;color:#202124">%s%s\n\n%s</pre>'
-             % (crm_link, car_line, html.escape(info)))
+        car_div = _line('<a href="%s" style="color:#1155cc;text-decoration:underline">&#128663; %s</a>'
+                        % (html.escape(maps_url), html.escape(venue_raw)))
+    # crm_link + car_div anchors are intentionally unescaped (clickable links); the info text is escaped.
+    b.append('<div style="background:#f6f7f9;border:1px solid #dcdcdc;border-radius:8px;'
+             'padding:12px 14px;margin:6px 0 0;word-break:break-word">%s%s%s%s</div>'
+             % (_line(crm_link), car_div, _line("&nbsp;"), info_divs))
     b.append('</div>')
     return "".join(b)
 
