@@ -132,14 +132,14 @@ def _blocked_alert_html(rows):
     return "".join(b)
 
 def _authorize_email_html(rows):
-    """Approval-mode authorize email: each held email shows the Approve / Edit / Cancel buttons FIRST,
+    """Approval-mode authorize email: each held email shows the Preview & Send / Cancel buttons FIRST,
     then the recipient, subject, and a preview of the full body.
     rows: [(client_name, key, to, subject, body, token, deal_id)]."""
     b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
     b.append('<h2 style="margin:0 0 4px">Approve to send</h2>')
     b.append('<p style="color:#5f6368;margin:0 0 16px">These emails are held and will NOT go to the client '
-             'until you act. <b>Preview &amp; Send</b> opens it in the CRM to review/tweak first; <b>Send</b> '
-             'delivers it as-is; <b>Cancel</b> drops it (you can revive it later).</p>')
+             'until you send them. <b>Preview &amp; Send</b> opens it in the CRM to review and send; '
+             '<b>Cancel</b> drops it (you can revive it later).</p>')
     for row in rows:
         nm,key,to,subj,body,token,did = row[:7]
         note = row[7] if len(row) > 7 else None      # optional plain-language heads-up shown atop the box
@@ -155,9 +155,7 @@ def _authorize_email_html(rows):
         b.append(f'<a href="{html.escape(edit)}" style="display:inline-block;background:#1f8f5f;color:#fff;'
                  'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Preview &amp; Send</a>')
         b.append(f'<a href="{html.escape(canc)}" style="display:inline-block;background:#b23b3b;color:#fff;'
-                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Cancel</a>')
-        b.append(f'<a href="{html.escape(appr)}" style="display:inline-block;background:#6b7280;color:#fff;'
-                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 0 8px 0">Send</a>')
+                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 0 8px 0">Cancel</a>')
         b.append('</div>')
         b.append(f'<div style="color:#5f6368;font-size:12px">To: {html.escape(str(nm))} &lt;{html.escape(str(to))}&gt;</div>')
         b.append(f'<div style="font-weight:bold;margin:3px 0 10px">{html.escape(str(subj))}</div>')
@@ -490,7 +488,7 @@ def main():
                                            "pending_since": ef.get("pending_since") or TODAY.isoformat()}
                                 held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key,
                                                  contact["email"], subjf, hbodyf, tokf, d["id"],
-                                                 "Flagged email - you normally send these by hand. Approve to send it as-is, Edit to tweak it in the CRM first, or Cancel to drop it."))
+                                                 "Flagged email - you normally send these by hand. Use Preview & Send to review and send it, or Cancel to drop it."))
                                 if SEND:
                                     cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
                 continue
