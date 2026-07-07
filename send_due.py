@@ -400,7 +400,7 @@ def render_html(raw, V, signature):
     def _link(m):
         text, field = m.group(1), m.group(3)
         url = (V.get(field) or "") if field else m.group(2)
-        return f'<a href="{html.escape(url)}">{text}</a>' if url else text
+        return f'<a href="{html.escape(url)}" style="color:#1155cc;text-decoration:underline">{text}</a>' if url else text
     s = re.sub(r"\[([^\]]+)\]\((\{\{(\w+)\}\}|https?://[^)]+)\)", _link, s)
     s = re.sub(r"\{\{(\w+)\}\}", lambda m: html.escape(V[m.group(1)]) if V.get(m.group(1)) else m.group(0), s)
     s = _lists_and_breaks(s)
