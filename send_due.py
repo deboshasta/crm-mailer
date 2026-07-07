@@ -229,11 +229,19 @@ def _gcal_email_html(d, V, token, reminder):
     crm_link = ('<a href="%s/?deal=%s" style="color:#1155cc;font-weight:bold;text-decoration:underline">'
                 'Open this deal in the CRM &#8594;</a>'
                 % (html.escape(CRM_BASE), html.escape(str(d.get("id")))))
-    # crm_link is intentionally unescaped (renders as a clickable link); the deal info below is escaped text.
+    # right under the deal link: a car emoji + the venue address (plain text), the whole line
+    # clickable -> Google Maps search for that address. Only when a venue address is set.
+    venue_raw = (V.get("Venue") or "").strip()
+    car_line = ""
+    if venue_raw:
+        maps_url = "https://www.google.com/maps?q=" + urllib.parse.quote_plus(venue_raw)
+        car_line = ('\n<a href="%s" style="color:#1155cc;text-decoration:underline">&#128663; %s</a>'
+                    % (html.escape(maps_url), html.escape(venue_raw)))
+    # crm_link + car_line are intentionally unescaped (they render as clickable links); the info is escaped.
     b.append('<pre style="font-family:Verdana,Arial,sans-serif;font-size:13px;line-height:1.55;'
              'white-space:pre-wrap;word-break:break-word;background:#f6f7f9;border:1px solid #dcdcdc;'
-             'border-radius:8px;padding:12px 14px;margin:6px 0 0;color:#202124">%s\n\n%s</pre>'
-             % (crm_link, html.escape(info)))
+             'border-radius:8px;padding:12px 14px;margin:6px 0 0;color:#202124">%s%s\n\n%s</pre>'
+             % (crm_link, car_line, html.escape(info)))
     b.append('</div>')
     return "".join(b)
 
