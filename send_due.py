@@ -251,7 +251,7 @@ def _gcal_email_html(d, V, token, reminder):
             ("Money", html.escape("Fee $%s  -  deposit $%s  -  balance $%s" % (V.get("AppearanceFee") or "?", V.get("DepositAmount") or "0", V.get("BalanceAmount") or "?")))]
     info_divs = "".join(_line(html.escape(k) + ": " + val) for k, val in rows)
     crm_link = ('<a href="%s/?deal=%s" style="color:#1155cc;font-weight:bold;text-decoration:underline">'
-                '&#128187; Open this deal in the CRM &#8594;</a>'
+                '&#128187; Open in CRM &#8594;</a>'
                 % (html.escape(CRM_BASE), html.escape(str(d.get("id")))))
     # right under the deal link: a car emoji + the venue address, the whole line clickable -> Google Maps.
     venue_raw = (V.get("Venue") or "").strip()
