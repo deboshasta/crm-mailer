@@ -597,6 +597,16 @@ def main():
         for key, e in list(st.items()):
             if not isinstance(e, dict) or not e.get("send_now"): continue
             if e.get("sent") or e.get("cancelled"): continue
+            # Respect an in-flight claim from the instant send-now endpoint (avoid a sweep-vs-instant double-send).
+            # A claim older than 5 min is stale (a crashed sender) and fair game again.
+            cl = e.get("claimed")
+            if cl:
+                try:
+                    _dt = datetime.datetime.fromisoformat(str(cl))
+                    if _dt.tzinfo is None: _dt = _dt.replace(tzinfo=datetime.timezone.utc)
+                    if (datetime.datetime.now(datetime.timezone.utc) - _dt).total_seconds() < 300: continue
+                except Exception:
+                    continue   # unparseable claim -> let the instant channel own it (never risk a double-send)
             t=TPL.get(key)
             to = (e.get("to") or contact.get("email") or "").strip()   # app can override the recipient
             if not to: continue
@@ -614,7 +624,7 @@ def main():
         print(f"  -> [now] {to}  |  [{key}]  {subj[:70]}{'  [no-safe]' if no_safe else ''}")
         if SEND:
             mailer.send_email(to, subj, body, owner=no_safe)
-            ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("send_now",None)
+            ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("send_now",None); ne.pop("claimed",None)
             st[key]=ne
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
     if SEND and now_due: print("send-now emails sent + flags cleared.")
