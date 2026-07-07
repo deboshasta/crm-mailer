@@ -75,6 +75,19 @@ CUE = [
 ]
 AUTO_MODES = ("auto",)   # 'window' mode retired -> folded into 'auto' (they always behaved identically)
 
+def _flag_suppressed(key, d):
+    """A FLAG email that should NOT surface at all (mirror of the app's showIf guards), so we never send
+    Simon an approval request for it. (customization_request is also guarded in the loop.)"""
+    if key in ("deposit_chase_1", "deposit_chase_2"):
+        return d.get("deposit_status") in ("paid", "not_required")
+    if key == "balance_reminder":
+        try: bal = float(d.get("balance_amount") or 0)
+        except (TypeError, ValueError): bal = 0.0
+        return bal <= 0 or d.get("balance_status") in ("paid", "not_required")
+    if key == "customization_request":
+        return bool(d.get("trivia_received_at"))
+    return False
+
 # ---- Missing-field guard ---------------------------------------------------
 # An AUTO email is PAUSED (not sent) when the template uses a {{merge field}} that is blank for
 # this deal, so a client never receives an email with a hole in it. The pause is recorded on
@@ -447,7 +460,39 @@ def main():
             if key in ("refer_won_daybefore","refer_won_after") and not d.get("performer_id"): continue
             # repeat clients: post-show emails become FLAG/manual (don't auto-send the same note yearly)
             eff = "flag" if (d.get("is_repeat") and anchor=="show" and off>0) else mode
-            if eff not in AUTO_MODES: continue
+            if eff not in AUTO_MODES:
+                # FLAG emails are never auto-sent. But from 7am ET on their due date we send Simon ONE approval
+                # request (Approve / Edit / Cancel) so flagged emails ALSO route through his inbox. This is
+                # ALWAYS ON - independent of APPROVAL_MODE - so it keeps happening even when fully live.
+                # Catch-up: if the 7am sweep is missed, the next sweep after 7am sends it; if the due date has
+                # already passed with no request, the next sweep sends it. pending_approval/flag_approval_sent
+                # guard it to exactly once. (He can still send/edit/cancel from Focus; both paths are
+                # double-send-safe via the 'sent' guards in send-now.js and approve-email.js.)
+                if eff == "flag":
+                    tf = TPL.get(key)
+                    if tf and not _flag_suppressed(key, d):
+                        basef = anchor_date(d, anchor, stages)
+                        if basef:
+                            sdatef = basef + datetime.timedelta(days=off)
+                            ef = st.get(key) or {}
+                            if (SEQ_START <= sdatef <= TODAY and contact.get("email")
+                                    and not ef.get("sent") and not ef.get("cancelled")
+                                    and not ef.get("pending_approval") and not ef.get("flag_approval_sent")
+                                    and not (sdatef == TODAY and tz.hour() < 7)):   # on the due day, hold until 7am ET
+                                Vf = merge_values(d, contact)
+                                subjf = ef["subject"] if ef.get("subject") is not None else fill_subject(tf["subject"], Vf)
+                                hbodyf = ef["body"] if ef.get("body") is not None else render_html(tf["body"], Vf, "")
+                                tokf = ef.get("approve_token") or secrets.token_urlsafe(24)
+                                st[key] = {**ef, "pending_approval": True, "approve_token": tokf,
+                                           "to": contact["email"], "subject": subjf, "body": hbodyf,
+                                           "flag_approval_sent": TODAY.isoformat(),
+                                           "pending_since": ef.get("pending_since") or TODAY.isoformat()}
+                                held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key,
+                                                 contact["email"], subjf, hbodyf, tokf, d["id"],
+                                                 "Flagged email - you normally send these by hand. Approve to send it as-is, Edit to tweak it in the CRM first, or Cancel to drop it."))
+                                if SEND:
+                                    cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                continue
             t=TPL.get(key)
             if not t: continue
             base=anchor_date(d,anchor,stages)
@@ -524,7 +569,7 @@ def main():
     if held_new:
         print(f"{TODAY}  -  {len(held_new)} email(s) HELD for approval -> individual authorize emails to Simon")
         for row in held_new:
-            nm,key,to,subj,body,token,did = row
+            nm,key,to,subj,body,token,did = row[:7]
             print(f"  -> [held] {to}  |  [{key}]  {subj[:60]}")
             if SEND:
                 mailer.send_email("simon@thesimonshow.com",
