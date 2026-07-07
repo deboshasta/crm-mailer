@@ -20,8 +20,8 @@ def _now_iso():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 # per-deal customization/trivia form base (must match app.js CUSTOMIZE_BASE).
-# Update to the real deployed host at go-live.
-CUSTOMIZE_BASE = "https://www.thesimonshow.com/trivia.html"
+# Hosted on the dedicated forms.thesimonshow.com Vercel project (repo crm-forms).
+CUSTOMIZE_BASE = "https://forms.thesimonshow.com/trivia.html"
 
 # CRM app base for deep-links in notification emails (?deal=<id> opens that deal).
 CRM_BASE = "https://crm.thesimonshow.com"
