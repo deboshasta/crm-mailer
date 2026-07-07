@@ -151,12 +151,12 @@ def _authorize_email_html(rows):
                      'padding:8px 10px;margin:0 0 12px;color:#7a5c00;font-size:13px">%s</div>' % html.escape(str(note)))
         # buttons FIRST, above the To field
         b.append('<div style="margin:0 0 12px">')
-        b.append(f'<a href="{html.escape(appr)}" style="display:inline-block;background:#1f8f5f;color:#fff;'
-                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Approve &amp; send</a>')
         b.append(f'<a href="{html.escape(edit)}" style="display:inline-block;background:#1155cc;color:#fff;'
-                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Edit</a>')
+                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Preview &amp; Send</a>')
         b.append(f'<a href="{html.escape(canc)}" style="display:inline-block;background:#b23b3b;color:#fff;'
-                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 0 8px 0">Cancel</a>')
+                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 8px 8px 0">Cancel</a>')
+        b.append(f'<a href="{html.escape(appr)}" style="display:inline-block;background:#1f8f5f;color:#fff;'
+                 'text-decoration:none;font-weight:bold;padding:9px 18px;border-radius:8px;margin:0 0 8px 0">Send</a>')
         b.append('</div>')
         b.append(f'<div style="color:#5f6368;font-size:12px">To: {html.escape(str(nm))} &lt;{html.escape(str(to))}&gt;</div>')
         b.append(f'<div style="font-weight:bold;margin:3px 0 10px">{html.escape(str(subj))}</div>')
