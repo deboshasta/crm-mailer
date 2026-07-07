@@ -73,6 +73,22 @@ def do_backup():
     run(["gh", "release", "create", TAG, ENC, "--repo", REPO,
          "--title", "DB backup %s" % STAMP,
          "--notes", "Encrypted pg_dump (custom format). %d bytes. Verified: %s." % (enc_size, verified)])
+    # 4b) plain-CSV export of every public table (a human-readable snapshot), zipped + GPG-encrypted just like
+    #     the dump, and attached to the SAME release. Decrypt + unzip to open the CSVs in a spreadsheet - no
+    #     pg_restore / Postgres needed. Encrypted because it's client PII; never leave it plaintext on a release.
+    csv_note = ""
+    try:
+        csv_enc = make_encrypted_csv()
+        if csv_enc:
+            run(["gh", "release", "upload", TAG, csv_enc, "--repo", REPO])
+            csv_note = " CSV export attached (%s)." % csv_enc
+            if RCLONE_REMOTE:
+                try:
+                    run(["rclone", "copy", csv_enc, RCLONE_REMOTE, "--no-traverse"])
+                except Exception as _e:
+                    csv_note += " (CSV Drive copy failed: %s)" % str(_e)[:120]
+    except Exception as _e:
+        csv_note = " (CSV export failed: %s)" % str(_e)[:150]
     # 5) optional Google Drive copy via rclone
     drive = ""
     if RCLONE_REMOTE:
@@ -83,7 +99,40 @@ def do_backup():
             drive = " (Google Drive copy FAILED: %s)" % str(e)[:200]
     # 6) prune old releases
     pruned = prune_old()
-    return "Verified restorable (%s). Encrypted backup %s uploaded (%d bytes).%s Pruned %d old backup(s)." % (verified, ENC, enc_size, drive, pruned)
+    return "Verified restorable (%s). Encrypted backup %s uploaded (%d bytes).%s%s Pruned %d old backup(s)." % (verified, ENC, enc_size, drive, csv_note, pruned)
+
+def make_encrypted_csv():
+    """Export every PUBLIC table to CSV (secrets live in the private schema, not here), zip them, and
+    GPG-encrypt the zip with the same passphrase as the dump. Returns the encrypted zip filename, or None
+    if nothing exported. Best-effort per table - a table that fails to export is skipped, not fatal."""
+    import zipfile
+    env = dict(os.environ, PGPASSWORD=PW)
+    try:
+        out = run([_pg("psql"), "-h", HOST, "-p", PORT, "-U", USER, "-d", "postgres", "-Atc",
+                   "select tablename from pg_tables where schemaname='public' order by tablename"], env=env)
+    except Exception as e:
+        print("  csv: could not list public tables:", str(e)[:150]); return None
+    tables = [t.strip() for t in out.splitlines() if t.strip()]
+    got = []
+    for t in tables:
+        fn = "%s.csv" % t
+        try:
+            run([_pg("psql"), "-h", HOST, "-p", PORT, "-U", USER, "-d", "postgres", "-v", "ON_ERROR_STOP=1",
+                 "-c", "\\copy (select * from public.\"%s\") to '%s' with (format csv, header true)" % (t, fn)], env=env)
+            got.append((t, fn))
+        except Exception as e:
+            print("  csv skip %s: %s" % (t, str(e)[:120]))
+    if not got:
+        return None
+    zipname = "crm-csv-%s.zip" % STAMP
+    with zipfile.ZipFile(zipname, "w", zipfile.ZIP_DEFLATED) as z:
+        for t, fn in got:
+            z.write(fn, "%s.csv" % t)
+    enc = zipname + ".gpg"
+    run(["gpg", "--batch", "--yes", "--pinentry-mode", "loopback", "--passphrase", GPG_PASS,
+         "--symmetric", "--cipher-algo", "AES256", "-o", enc, zipname])
+    print("  csv export: %d tables -> %s" % (len(got), enc))
+    return enc
 
 def verify():
     """Decrypt the just-made encrypted backup and pg_restore --list it, to prove it is a real,
