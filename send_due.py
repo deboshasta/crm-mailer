@@ -346,6 +346,12 @@ def merge_values(deal, contact):
 def fill_subject(s, V):
     return re.sub(r"\{\{(\w+)\}\}", lambda m: V[m.group(1)] if V.get(m.group(1)) else m.group(0), s or "")
 
+# Once the Magic Castle invite has been sent for a deal, drop the "I'll email you the invite in ~10 min"
+# heads-up line from any other ladder email (it would be stale / contradictory).
+_MC_HEADSUP_RE = re.compile(r"(?im)^.*(?:email you an invite to the magic castle|arrive in the next ten minutes).*(?:\r?\n)?")
+def _strip_mc_headsup(raw):
+    return re.sub(r"\n{3,}", "\n\n", _MC_HEADSUP_RE.sub("", raw or ""))
+
 def _lists_and_breaks(s):
     """Group consecutive '- ' lines into a <ul>; join the rest with <br> (same as before)."""
     lines = s.split("\n")
@@ -470,14 +476,17 @@ def main():
             if e.get("blocked"):                          # was paused, now complete -> clear the flag before sending
                 e = {k: v for k, v in e.items() if k != "blocked"}; st[key] = e
             subj = e["subject"] if e.get("subject") is not None else fill_subject(t["subject"],V)
-            body = e["body"] if e.get("body") is not None else render_html(t["body"],V,signature)
+            tbody = t["body"]
+            if (st.get("magic_castle") or {}).get("sent"):   # invite already went out -> drop the "I'll email you the invite" heads-up
+                tbody = _strip_mc_headsup(tbody)
+            body = e["body"] if e.get("body") is not None else render_html(tbody,V,signature)
             if APPROVAL_MODE:
                 # HOLD for approval: never auto-send. Store the email WITHOUT the signature - the authorize
                 # email shows a clean preview, and the signature is added inline (CID image) on Approve so it
                 # renders without "display images". Store a token for the Approve/Cancel links.
                 was_pending = bool(e.get("pending_approval"))
                 token = e.get("approve_token") or secrets.token_urlsafe(24)
-                hbody = e["body"] if e.get("body") is not None else render_html(t["body"], V, "")   # no signature
+                hbody = e["body"] if e.get("body") is not None else render_html(tbody, V, "")   # no signature
                 st[key] = {**e, "pending_approval": True, "approve_token": token,
                            "to": contact["email"], "subject": subj, "body": hbody,
                            "pending_since": e.get("pending_since") or TODAY.isoformat()}
