@@ -213,10 +213,8 @@ def _gcal_email_html(d, V, token, reminder):
                  'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 8px 10px 0">%s</a>' % (html.escape(link), open_lbl))
     b.append('<a href="%s" style="display:inline-block;background:#1f8f5f;color:#fff;text-decoration:none;'
              'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 0 10px 0">STEP 2: SAVE LINK to apt</a>' % html.escape(paste))
-    # horizontal rule, then a link to the CRM record, then all the deal info below (paste-ready)
+    # horizontal rule, then the paste-ready info box (the CRM record link lives INSIDE the box, top line)
     b.append('<hr style="border:0;border-top:1px solid #dcdcdc;margin:18px 0 14px">')
-    b.append('<p style="margin:0 0 6px"><a href="%s/?deal=%s" style="color:#1155cc;font-weight:bold;text-decoration:underline">Open this deal in the CRM &#8594;</a></p>'
-             % (html.escape(CRM_BASE), html.escape(str(d.get("id")))))
     # all the deal info, so Simon can paste it into the calendar appointment
     rows=[("Client", (V.get("ClientFullName") or "-") + (("   "+V["ClientPhone"]) if V.get("ClientPhone") else "")),
           ("When", (V.get("ShowDate") or "-") + ((" at "+stime) if stime else "")),
@@ -228,9 +226,14 @@ def _gcal_email_html(d, V, token, reminder):
     # single preformatted block: select it all + paste straight into the calendar appointment (no table
     # artifacts), or grab one line on its own. <pre> keeps the line breaks on copy; pre-wrap wraps long lines.
     info = "\n".join("%s: %s" % (k, val) for k, val in rows)
+    crm_link = ('<a href="%s/?deal=%s" style="color:#1155cc;font-weight:bold;text-decoration:underline">'
+                'Open this deal in the CRM &#8594;</a>'
+                % (html.escape(CRM_BASE), html.escape(str(d.get("id")))))
+    # crm_link is intentionally unescaped (renders as a clickable link); the deal info below is escaped text.
     b.append('<pre style="font-family:Verdana,Arial,sans-serif;font-size:13px;line-height:1.55;'
              'white-space:pre-wrap;word-break:break-word;background:#f6f7f9;border:1px solid #dcdcdc;'
-             'border-radius:8px;padding:12px 14px;margin:6px 0 0;color:#202124">%s</pre>' % html.escape(info))
+             'border-radius:8px;padding:12px 14px;margin:6px 0 0;color:#202124">%s\n\n%s</pre>'
+             % (crm_link, html.escape(info)))
     b.append('</div>')
     return "".join(b)
 
