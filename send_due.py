@@ -242,7 +242,7 @@ def _gcal_email_html(d, V, token, reminder):
     def _line(t): return '<div style="%s">%s</div>' % (_lst, t)
     info_divs = "".join(_line(html.escape("%s: %s" % (k, val))) for k, val in rows)
     crm_link = ('<a href="%s/?deal=%s" style="color:#1155cc;font-weight:bold;text-decoration:underline">'
-                'Open this deal in the CRM &#8594;</a>'
+                '&#128187; Open this deal in the CRM &#8594;</a>'
                 % (html.escape(CRM_BASE), html.escape(str(d.get("id")))))
     # right under the deal link: a car emoji + the venue address, the whole line clickable -> Google Maps.
     venue_raw = (V.get("Venue") or "").strip()
@@ -252,9 +252,10 @@ def _gcal_email_html(d, V, token, reminder):
         car_div = _line('<a href="%s" style="color:#1155cc;text-decoration:underline">&#128663; %s</a>'
                         % (html.escape(maps_url), html.escape(venue_raw)))
     # crm_link + car_div anchors are intentionally unescaped (clickable links); the info text is escaped.
+    car_block = (_line("&nbsp;") + car_div) if car_div else ""   # blank line between the CRM link and the venue link
     b.append('<div style="background:#f6f7f9;border:1px solid #dcdcdc;border-radius:8px;'
              'padding:12px 14px;margin:6px 0 0;word-break:break-word">%s%s%s%s</div>'
-             % (_line(crm_link), car_div, _line("&nbsp;"), info_divs))
+             % (_line(crm_link), car_block, _line("&nbsp;"), info_divs))
     b.append('</div>')
     return "".join(b)
 
