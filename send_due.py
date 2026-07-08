@@ -285,8 +285,11 @@ def selfcheckin_html(d, V, label):
     b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
     _cal=gcal_link(d,V)
     if _cal:
-        b.append(f'<p style="margin:0 0 12px"><a href="{html.escape(_cal)}" '
-                 f'style="color:#1155cc;font-weight:bold;text-decoration:underline">&#128197; calendar LINK</a></p>')
+        # deal already has a saved calendar event -> one button straight to that appointment; else "add to calendar"
+        _cal_lbl = "&#128197; Open gig in calendar" if d.get("gcal_url") else "&#128197; Add to calendar"
+        b.append(f'<p style="margin:0 0 14px"><a href="{html.escape(_cal)}" '
+                 f'style="display:inline-block;background:#1155cc;color:#fff;text-decoration:none;'
+                 f'font-weight:bold;padding:10px 20px;border-radius:8px">{_cal_lbl}</a></p>')
     b.append(f'<h2 style="margin:0 0 10px">Gig {html.escape(label)}: {html.escape(V["ClientFullName"] or "gig")}</h2>')
     b.append('<table style="border-collapse:collapse">')
     for k,val in rows:
