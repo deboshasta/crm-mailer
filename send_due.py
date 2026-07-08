@@ -573,7 +573,7 @@ def main():
     for (d,key,to,subj,body,st) in due:
         print(f"  -> {to}  |  [{key}]  {subj[:70]}")
         if SEND and _cad_ok:
-            if _claim_dispatch(cur, d["id"], key):
+            if _claim_dispatch(cur, d["id"], (st.get(key) or {}).get("dispatch_id") or key):
                 mailer.send_email(to, subj, body)
             else:
                 print("     (already dispatched - skipping)")
@@ -637,7 +637,7 @@ def main():
     for (d,key,to,subj,body,st,no_safe) in now_due:
         print(f"  -> [now] {to}  |  [{key}]  {subj[:70]}{'  [no-safe]' if no_safe else ''}")
         if SEND:
-            if _claim_dispatch(cur, d["id"], key):
+            if _claim_dispatch(cur, d["id"], (st.get(key) or {}).get("dispatch_id") or key):
                 mailer.send_email(to, subj, body, owner=no_safe)
             else:
                 print("     (already dispatched by the instant channel - skipping)")
@@ -680,7 +680,7 @@ def main():
     for (d,key,to,subj,body,st) in unblock:
         print(f"  -> [unblocked] {to}  |  [{key}]  {subj[:60]}")
         if SEND:
-            if _claim_dispatch(cur, d["id"], key):
+            if _claim_dispatch(cur, d["id"], (st.get(key) or {}).get("dispatch_id") or key):
                 mailer.send_email(to,subj,body)
             else:
                 print("     (already dispatched - skipping)")
