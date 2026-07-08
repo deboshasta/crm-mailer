@@ -17,8 +17,9 @@ from db import connect
 import mailer
 import tz
 
-RECIPIENTS = ["simon@thesimonshow.com", "rubuda@gmail.com"]
-SAMPLE_TO  = ["simon@thesimonshow.com"]
+REPORT_TO = "rubuda@gmail.com"          # the monthly report is addressed TO Simon's wife
+REPORT_CC = "simon@thesimonshow.com"    # ...with Simon CC'd
+SAMPLE_TO = "simon@thesimonshow.com"    # samples go to Simon only
 MONTHS = ["January", "February", "March", "April", "May", "June",
           "July", "August", "September", "October", "November", "December"]
 
@@ -191,11 +192,12 @@ def main():
             print("  fwd   ", x["label"], x["n"], "gigs", _money(x["tot"]), "avg", _money(x["avg"]))
         return
 
-    to = SAMPLE_TO if mode == "--sample" else RECIPIENTS
-    subj_out = ("SAMPLE - " + subj) if mode == "--sample" else subj
-    for addr in to:
-        r = mailer.send_email(addr, subj_out, body, owner=True)   # owner=True: internal report, bypasses safe mode
-        print("sent ->", addr, r.get("routed_to"))
+    if mode == "--sample":
+        r = mailer.send_email(SAMPLE_TO, "SAMPLE - " + subj, body, owner=True)
+        print("sent ->", SAMPLE_TO, r.get("routed_to"))
+    else:  # --send: addressed TO the wife, Simon CC'd (owner=True: internal report, bypasses safe mode)
+        r = mailer.send_email(REPORT_TO, subj, body, owner=True, cc=REPORT_CC)
+        print("sent ->", REPORT_TO, "| cc", REPORT_CC, "| routed", r.get("routed_to"))
 
 if __name__ == "__main__":
     main()

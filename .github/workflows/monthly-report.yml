@@ -1,6 +1,6 @@
 name: CRM monthly report
 
-# On the 1st of every month, email Simon (and rubuda@gmail.com) a performance report focused on the
+# On the 1st of every month, email a performance report (TO Simon's wife, Simon CC'd) focused on the
 # month that just ended, plus the trailing 3 completed months, the current month, and current+future
 # by month. A gig = a Closed Won deal with a show date and a fee > $0 (zero-dollar gigs excluded).
 # Logic + HTML live in monthly_report.py; this just runs it on the 1st.
