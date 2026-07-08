@@ -442,14 +442,16 @@ def _ge_send_date(d, key):
     if not show:
         return TODAY if key == "guest_excited" else None
     days_away = (show - TODAY).days
-    if days_away < 0:
-        return None                                       # show already passed -> never cue the forward-to-guests email
     if days_away > 21:
-        return TODAY if key == "guest_excited" else (show - datetime.timedelta(days=5))
-    if key == "guest_excited":
+        dt = TODAY if key == "guest_excited" else (show - datetime.timedelta(days=5))
+    elif key == "guest_excited":
         first = show - datetime.timedelta(days=8)
-        return first if first > TODAY else TODAY
-    return None                                            # near show -> no second send
+        dt = first if first > TODAY else TODAY
+    else:
+        return None                                       # near show -> no second send
+    if dt > show:
+        return None                                       # hard rule: never cue a send date AFTER the show date
+    return dt
 
 def anchor_date(deal, anchor, stages):
     if stages and deal.get("stage") not in stages: return None
