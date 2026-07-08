@@ -242,13 +242,19 @@ def _gcal_email_html(d, V, token, reminder):
     client_html = (html.escape(V.get("ClientFullName") or "-")
                    + (("   " + (_a(_tel_href(phone), phone) if _tel_href(phone) else html.escape(phone))) if phone else "")   # phone -> tel:
                    + (("   " + _a("mailto:" + email, email)) if email else ""))                                              # email -> mailto:
-    rows = [("Client", client_html),                              # value is HTML; the rest are plain-escaped below
+    _dep_amt = V.get("DepositAmount") or "0"; _ds = (d.get("deposit_status") or "").lower()
+    if _ds == "paid":            _dep = 'deposit $%s <b style="color:#1e874b">&#10003; PAID</b>' % html.escape(_dep_amt)
+    elif _ds == "not_required":  _dep = 'deposit <b>not required</b>'
+    elif _ds == "pending":       _dep = 'deposit $%s <b style="color:#b8860b">(pending)</b>' % html.escape(_dep_amt)
+    else:                        _dep = 'deposit $%s <b style="color:#c0392b">(NOT paid yet)</b>' % html.escape(_dep_amt)
+    money_html = 'Fee $%s  -  %s  -  balance $%s' % (html.escape(V.get("AppearanceFee") or "?"), _dep, html.escape(V.get("BalanceAmount") or "?"))
+    rows = [("Client", client_html),                              # Client + Money values are HTML; the rest are plain-escaped below
             ("When", html.escape((V.get("ShowDate") or "-") + ((" at " + stime) if stime else ""))),
             ("Venue", html.escape(V.get("Venue") or "(not set)")),
             ("Occasion", html.escape(V.get("Occasion") or "-")),
             ("Event details", html.escape(V.get("EventDetails") or "-")),
             ("Format", html.escape(V.get("FormatDetails") or "-")),
-            ("Money", html.escape("Fee $%s  -  deposit $%s  -  balance $%s" % (V.get("AppearanceFee") or "?", V.get("DepositAmount") or "0", V.get("BalanceAmount") or "?")))]
+            ("Money", money_html)]
     info_divs = "".join(_line(html.escape(k) + ": " + val) for k, val in rows)
     crm_link = ('<a href="%s/?deal=%s" style="color:#1155cc;font-weight:bold;text-decoration:underline">'
                 '&#128187; Open in CRM &#8594;</a>'
