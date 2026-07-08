@@ -454,6 +454,11 @@ def main():
         except Exception as _e:
             _send_fails.append((str(to), str(subj), str(_e)[:300]))
             print("  !! SEND FAILED:", to, "-", str(_e)[:200])
+            try:
+                cur.execute("insert into error_log(source,message,detail) values(%s,%s,%s)",
+                            ("mailer", ("send failed to %s: %s" % (to, str(_e)))[:500], str(subj)[:2000]))
+            except Exception:
+                pass
             return None
     mailer.send_email = _safe_send   # covers every send site in this run without touching each call
     cols_d=["id","stage","show_date","show_time","venue_address","occasion","company","guest_of_honor",

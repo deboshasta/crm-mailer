@@ -31,6 +31,9 @@ jobs:
         run: pip install -r requirements.txt
       - name: Blocked-email daily nag
         run: python blocked_digest.py --send
+      - name: Error digest (last 24h)
+        if: always()
+        run: python error_digest.py --send
       - name: Alert Simon on failure
         if: failure()
         env:
