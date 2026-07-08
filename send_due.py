@@ -442,6 +442,8 @@ def _ge_send_date(d, key):
     if not show:
         return TODAY if key == "guest_excited" else None
     days_away = (show - TODAY).days
+    if days_away < 0:
+        return None                                       # show already passed -> never cue the forward-to-guests email
     if days_away > 21:
         return TODAY if key == "guest_excited" else (show - datetime.timedelta(days=5))
     if key == "guest_excited":
