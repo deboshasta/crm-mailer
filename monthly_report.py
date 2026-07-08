@@ -158,9 +158,10 @@ def render_html(model):
         '<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:640px;'
         'margin:0 auto;padding:8px 4px;color:%s">'
         '<div style="color:%s;font-size:12px;text-transform:uppercase;letter-spacing:.6px;margin:0 0 2px">The Simon Show</div>'
-        '<h1 style="font-size:20px;margin:0 0 18px">Monthly Report</h1>'
+        '<h1 style="font-size:20px;margin:0 0 10px">Monthly Report</h1>'
+        '<p style="font-size:15px;font-weight:700;color:%s;margin:0 0 18px">Feel free with requests to change format or add metrics.</p>'
         '%s%s%s%s</div>'
-    ) % (_INK, _MUTED, hero, recent, ahead, foot)
+    ) % (_INK, _MUTED, _INK, hero, recent, ahead, foot)
 
 def subject(model):
     f = model["focus"]
