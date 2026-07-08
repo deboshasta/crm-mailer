@@ -67,6 +67,7 @@ CUE = [
     ("precall_shark","stage",10,"auto",("schedule_call",)),
     ("precall_breakup","stage",14,"auto",("schedule_call",)),
     ("guest_excited","stage",0,"auto",("closed_won","booked")),
+    ("guest_excited_2","show",-5,"auto",("closed_won","booked")),
     ("confirm_details","stage",0,"auto",("closed_won",)),
     ("refer","stage",0,"flag",("refer",)),
     ("closed_lost_daybefore","show",-1,"flag",("closed_lost",)),
@@ -434,6 +435,20 @@ def _claim_dispatch(cur, deal_id, key):
     except Exception:
         return True
 
+def _ge_send_date(d, key):
+    """Dynamic send date for the guest_excited split (mirror of the app's _geDates). Returns a date or None.
+    show > 21d away -> now + (show-5); show <= 21d away -> once at show-8 (or today if within 8)."""
+    show = _d(d.get("show_date"))
+    if not show:
+        return TODAY if key == "guest_excited" else None
+    days_away = (show - TODAY).days
+    if days_away > 21:
+        return TODAY if key == "guest_excited" else (show - datetime.timedelta(days=5))
+    if key == "guest_excited":
+        first = show - datetime.timedelta(days=8)
+        return first if first > TODAY else TODAY
+    return None                                            # near show -> no second send
+
 def anchor_date(deal, anchor, stages):
     if stages and deal.get("stage") not in stages: return None
     if anchor=="show":    return _d(deal.get("show_date"))
@@ -539,6 +554,10 @@ def main():
             base=anchor_date(d,anchor,stages)
             if not base: continue
             send_date = base + datetime.timedelta(days=off)
+            if key in ("guest_excited", "guest_excited_2"):     # dynamic dates for the forward-to-guests split
+                send_date = _ge_send_date(d, key)
+                if send_date is None:
+                    continue
             # Migration cutover: SEQ_START is the send-date FLOOR (the day the new CRM took over from Zoho).
             # Skip anything scheduled BEFORE it (Zoho's backlog - permanently). Send today's, and CATCH UP any
             # scheduled on/after the floor that slipped (missed). Never re-send the pre-cutover backlog.
