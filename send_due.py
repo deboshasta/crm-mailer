@@ -408,6 +408,17 @@ def render_html(raw, V, signature):
         s += "<br><br>" + signature   # signature is trusted raw HTML (image + links), do NOT escape
     return s
 
+def _claim_dispatch(cur, deal_id, key):
+    """Bulletproof idempotency shared with the instant send-now endpoint. Returns True if THIS run is the
+    first to claim (deal_id, key) - send it - or False if it was already dispatched (skip). Immune to
+    cue_state being rewritten. Fails OPEN (returns True) only if the log itself is unavailable, since
+    cue_state's own 'sent' marker is still a backstop for the daily one-shot emails."""
+    try:
+        cur.execute("insert into email_dispatch(deal_id,cue_key) values (%s,%s) on conflict do nothing", (deal_id, key))
+        return cur.rowcount == 1
+    except Exception:
+        return True
+
 def anchor_date(deal, anchor, stages):
     if stages and deal.get("stage") not in stages: return None
     if anchor=="show":    return _d(deal.get("show_date"))
@@ -562,7 +573,10 @@ def main():
     for (d,key,to,subj,body,st) in due:
         print(f"  -> {to}  |  [{key}]  {subj[:70]}")
         if SEND and _cad_ok:
-            mailer.send_email(to, subj, body)
+            if _claim_dispatch(cur, d["id"], key):
+                mailer.send_email(to, subj, body)
+            else:
+                print("     (already dispatched - skipping)")
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("blocked",None); st[key]=ne
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
     if SEND and _cad_ok and due: print("marked sent + saved.")
@@ -623,7 +637,10 @@ def main():
     for (d,key,to,subj,body,st,no_safe) in now_due:
         print(f"  -> [now] {to}  |  [{key}]  {subj[:70]}{'  [no-safe]' if no_safe else ''}")
         if SEND:
-            mailer.send_email(to, subj, body, owner=no_safe)
+            if _claim_dispatch(cur, d["id"], key):
+                mailer.send_email(to, subj, body, owner=no_safe)
+            else:
+                print("     (already dispatched by the instant channel - skipping)")
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("send_now",None); ne.pop("claimed",None)
             st[key]=ne
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
@@ -663,7 +680,10 @@ def main():
     for (d,key,to,subj,body,st) in unblock:
         print(f"  -> [unblocked] {to}  |  [{key}]  {subj[:60]}")
         if SEND:
-            mailer.send_email(to,subj,body)
+            if _claim_dispatch(cur, d["id"], key):
+                mailer.send_email(to,subj,body)
+            else:
+                print("     (already dispatched - skipping)")
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("blocked",None); ne.pop("send_now",None)
             st[key]=ne
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
