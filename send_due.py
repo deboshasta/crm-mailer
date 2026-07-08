@@ -49,6 +49,7 @@ CUE = [
     ("customization_request","show",-21,"flag",("closed_won",)),
     ("pre_show_2week","show",-14,"auto",("closed_won",)),
     ("pre_show_reminder","show",-3,"auto",("closed_won",)),
+    ("stage_intro","show",-4,"flag",("closed_won",)),
     ("deposit_chase_1","stage",2,"flag",("booked","closed_won")),
     ("deposit_chase_2","stage",7,"flag",("booked","closed_won")),
     ("balance_reminder","show",-2,"flag",("booked","closed_won")),
@@ -84,8 +85,13 @@ def _flag_suppressed(key, d):
         try: bal = float(d.get("balance_amount") or 0)
         except (TypeError, ValueError): bal = 0.0
         return bal <= 0 or d.get("balance_status") in ("paid", "not_required")
+    if key == "stage_intro":
+        return not d.get("send_stage_intro")
     if key == "customization_request":
-        return bool(d.get("trivia_received_at"))
+        trivia_needed = (d.get("require_trivia") is not False) and not d.get("trivia_received_at")
+        photos_needed = ((float(d.get("photo_goh_limit") or 0) > 0 or float(d.get("photo_guest_limit") or 0) > 0)
+                         and not d.get("photos_received_at"))
+        return not (trivia_needed or photos_needed)
     return False
 
 # ---- Missing-field guard ---------------------------------------------------
@@ -455,7 +461,7 @@ def main():
             "event_type","is_repeat","customize_token","trivia","trivia_received_at","trivia_notified_at",
             "performer_id","commission_amount","proposal_sent_at","photos_received_at","photos_notified_at",
             "deal_name","cue_state","stage_changed_at","created_at","primary_contact_id","gcal_url",
-            "deposit_status","deposit_paid_at"]
+            "deposit_status","deposit_paid_at","require_trivia","send_stage_intro","photo_goh_limit","photo_guest_limit"]
     cur.execute("select "+",".join(cols_d)+" from deals")
     deals=[dict(zip(cols_d,r)) for r in cur.fetchall()]
     cur.execute("select id,first_name,last_name,full_name,email,phone_mobile,phone_other from contacts")
