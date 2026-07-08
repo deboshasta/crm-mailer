@@ -29,6 +29,7 @@ jobs:
       RCLONE_REMOTE:  ${{ vars.RCLONE_REMOTE }}      # optional, e.g. "gdrive:CRM-Backups"
       RCLONE_CONF:    ${{ secrets.RCLONE_CONF }}     # optional, rclone.conf contents for Google Drive
       GH_TOKEN:       ${{ github.token }}
+      JOIN_PUSH_BASE: ${{ secrets.JOIN_PUSH_BASE }}   # out-of-band phone push on backup failure (roadmap #5); no-ops if unset
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -13,5 +13,10 @@ try:
             '<p><a href="%s">Open the failed run</a> to see which step broke.</p></div>' % (label, url))
     mailer.send_email("simon@thesimonshow.com", "[CRM] %s FAILED" % label, body, owner=True)
     print("failure alert sent for:", label)
+    try:                                        # out-of-band phone push (roadmap #5); env-only - the DB may be what failed
+        import join
+        join.push("CRM job FAILED", "%s failed - see the GitHub run" % label)
+    except Exception:
+        pass
 except Exception as e:
     print("failure alert could NOT be sent:", e)

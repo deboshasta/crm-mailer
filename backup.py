@@ -184,6 +184,17 @@ def notify(ok, detail):
                     "<p>&#10060; <b>Database backup FAILED.</b> Details below.</p>"
                     "<pre style=\"white-space:pre-wrap;font-size:12px\">%s</pre></div>" % detail)
         mailer.send_email("simon@thesimonshow.com", subj, body)
+        if not ok:                                           # out-of-band phone push on backup failure (roadmap #5)
+            try:
+                import join
+                if not join.push("CRM backup FAILED", (detail or "")[:150]):
+                    try:                                     # env not set -> fall back to DB config
+                        from db import connect
+                        _c = connect(); join.push("CRM backup FAILED", (detail or "")[:150], _c); _c.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
     except Exception as e:
         print("notify failed:", e)
 

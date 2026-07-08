@@ -24,6 +24,7 @@ jobs:
       DB_HOST:      ${{ vars.DB_HOST }}
       DB_USER:      ${{ vars.DB_USER }}
       DB_PORT:      ${{ vars.DB_PORT }}
+      JOIN_PUSH_BASE: ${{ secrets.JOIN_PUSH_BASE }}   # out-of-band phone push (roadmap #5); no-ops if unset
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

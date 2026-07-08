@@ -123,6 +123,11 @@ def check(cur, name, send=True):
         if send:
             _send("[CRM] %s may have STOPPED" % label, _alert_html(label, name, last_dt, age_h))
             _set(cur, alert_key, _utcnow().isoformat())
+            try:                                            # out-of-band phone push (roadmap #5)
+                import join
+                join.push("CRM: %s STOPPED" % label, "%s stale %.0fh - no run recorded" % (label, age_h), cur)
+            except Exception:
+                pass
     else:                                               # FRESH -> healthy
         if prev_alert:                                  # it had been alerted -> it just recovered
             print("heartbeat: %s recovered (%.1fh) -> clearing alert" % (name, age_h))

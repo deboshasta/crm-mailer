@@ -380,6 +380,8 @@ def merge_values(deal, contact):
         "ThreadSubject": deal.get("deal_name") or deal.get("occasion") or "your event",
         "LastShowYear": "",
     }
+    # conditional-section flag: trivia is asked only when required and not already received (see _conditional_blocks)
+    V["_cond_trivia"] = (deal.get("require_trivia") is not False) and not deal.get("trivia_received_at")
     return V
 
 def fill_subject(s, V):
@@ -408,7 +410,17 @@ def _lists_and_breaks(s):
             out.append(lines[i]); prev_text = True; i += 1
     return "".join(out)
 
+# Conditional sections: {{#trivia}}...{{/trivia}} keeps its inner content only when V["_cond_trivia"] is
+# truthy, else the whole block is dropped. Used so the customization_request email skips the trivia ask when
+# a deal has require_trivia OFF. The markers use '#'/'/', which the {{\w+}} merge/field regexes ignore, so
+# they never register as merge fields or as "missing required" fields. Mirrored in app.js _conditionalBlocks.
+_COND_RE = re.compile(r"\{\{#(\w+)\}\}(.*?)\{\{/\1\}\}", re.S)
+def _conditional_blocks(raw, V):
+    out = _COND_RE.sub(lambda m: (m.group(2) if V.get("_cond_" + m.group(1)) else ""), raw or "")
+    return re.sub(r"\n{3,}", "\n\n", out)   # collapse the blank-line gap a dropped block can leave
+
 def render_html(raw, V, signature):
+    raw = _conditional_blocks(raw, V)          # {{#trivia}}...{{/trivia}} -> keep only if trivia is required
     raw = _drop_empty_optional_lines(raw, V)   # blank EventDetails etc. -> drop the whole line
     s = html.escape(raw or "")
     s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
@@ -947,6 +959,11 @@ def main():
             print("failure-summary email sent.")
         except Exception as _ex:
             print("failure-summary email ALSO failed:", _ex)
+        try:                                                # out-of-band: also ping Simon's phone (roadmap #5)
+            import join
+            join.push("CRM emails FAILED", "%d email send(s) failed in the last sweep" % len(_send_fails), c)
+        except Exception:
+            pass
 
     # HEARTBEAT (Phase 2): record that the mailer ran, and cross-check the backup stamp so a dead
     # nightly backup is caught within a sweep (not just by the dedicated heartbeat cron). Best-effort.
