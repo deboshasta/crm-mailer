@@ -512,6 +512,7 @@ def render_html(raw, V, signature):
     raw = _drop_empty_optional_lines(raw, V)   # blank EventDetails etc. -> drop the whole line
     s = html.escape(raw or "")
     s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+    s = re.sub(r"__(.+?)__", r"<u>\1</u>", s)
     # markdown links: target may be a literal https URL OR a {{Field}} that resolves to a URL
     def _link(m):
         text, field = m.group(1), m.group(3)
