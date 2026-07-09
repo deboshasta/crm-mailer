@@ -826,12 +826,14 @@ def main():
             mc_held += 1
     if SEND and mc_held: print(f"magic castle: {mc_held} held for approval (authorize email sent).")
 
-    # ---- W9: on Closed Won for CORPORATE deals (event_type='corporate'). HOLDS for Simon's approval (never
-    #      auto-sends); the W9 PDF is attached when he Approves (attach:'w9_email'). One per deal
-    #      (cue_state['w9_email']); pending_approval guards re-alerts. ----
+    # ---- W9: on Closed Won for ORGANIZATION deals (corporate / school / non_profit / municipal - not a
+    #      private family/individual). HOLDS for Simon's approval (never auto-sends); the W9 PDF is attached
+    #      when he Approves (attach:'w9_email'). One per deal (cue_state['w9_email']); pending_approval guards
+    #      re-alerts. Keep W9_EVENT_TYPES in sync with app.js. ----
+    W9_EVENT_TYPES = ("corporate", "school", "non_profit", "municipal")
     w9_held = 0
     for d in deals:
-        if d.get("event_type") != "corporate": continue
+        if d.get("event_type") not in W9_EVENT_TYPES: continue
         if d.get("stage") != "closed_won": continue
         mv = _d(d.get("stage_changed_at"))
         if not mv or mv < SEQ_START: continue                 # only deals moved to Closed Won since go-live
