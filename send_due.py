@@ -22,6 +22,7 @@ def _now_iso():
 # per-deal customization/trivia form base (must match app.js CUSTOMIZE_BASE).
 # Hosted on the dedicated forms.thesimonshow.com Vercel project (repo crm-forms).
 CUSTOMIZE_BASE = "https://forms.thesimonshow.com/trivia.html"
+PHOTO_BASE = "https://forms.thesimonshow.com/custom-images.html"   # photo upload form (must match app.js PHOTO_BASE)
 
 # CRM app base for deep-links in notification emails (?deal=<id> opens that deal).
 CRM_BASE = "https://crm.thesimonshow.com"
@@ -101,7 +102,8 @@ def _flag_suppressed(key, d):
 # cue_state[key].blocked = {"since": iso, "fields": [...]}. blocked_digest.py nags Simon once a
 # day until it is filled (then the email auto-sends, see the re-check pass) or cancelled.
 # OPTIONAL fields are legitimately often-blank and never block (kept in sync with check_missing.py).
-OPTIONAL_FIELDS = {"Company", "GuestOfHonor", "ProposalLink", "LastShowYear", "EventDetails"}
+OPTIONAL_FIELDS = {"Company", "GuestOfHonor", "ProposalLink", "LastShowYear", "EventDetails",
+                   "PhotoLink", "PhotoGohLimit", "PhotoGuestLimit"}   # only shown inside their active photo block
 # when one of these is BLANK, drop the WHOLE line it sits on (don't show it, don't flag it)
 OPTIONAL_LINE_FIELDS = {"EventDetails"}
 def _drop_empty_optional_lines(raw, V):
@@ -382,6 +384,17 @@ def merge_values(deal, contact):
     }
     # conditional-section flag: trivia is asked only when required and not already received (see _conditional_blocks)
     V["_cond_trivia"] = (deal.get("require_trivia") is not False) and not deal.get("trivia_received_at")
+    # photo-request scenario: the customization email picks its body by which photos are requested.
+    def _numlim(x):
+        try: return float(x)
+        except (TypeError, ValueError): return 0.0
+    _goh = _numlim(deal.get("photo_goh_limit")); _guest = _numlim(deal.get("photo_guest_limit"))
+    V["PhotoLink"] = (f"{PHOTO_BASE}?t={deal.get('customize_token')}" if deal.get("customize_token") else "")
+    V["PhotoGohLimit"] = (str(int(_goh)) if _goh > 0 else "")
+    V["PhotoGuestLimit"] = (str(int(_guest)) if _guest > 0 else "")
+    V["_cond_photos_goh_only"]     = (_goh > 0 and _guest <= 0)
+    V["_cond_photos_both"]         = (_goh > 0 and _guest > 0)
+    V["_cond_photos_guests_only"]  = (_goh <= 0 and _guest > 0)
     return V
 
 def fill_subject(s, V):
