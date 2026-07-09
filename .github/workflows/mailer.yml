@@ -54,6 +54,8 @@ jobs:
         run: python send_due.py --send
       - name: Queue due SMS drafts
         run: python sms_due.py
+      - name: Eblast send worker (idle until SES creds + eblast_safe_mode=false)
+        run: python eblast_send.py
       - name: Inquiry leads self-nag
         run: python inquiry_leads.py --send
       - name: Likely-no self-nag
