@@ -463,6 +463,13 @@ def merge_values(deal, contact):
     V["_cond_photos_goh_only"]     = (_goh > 0 and _guest <= 0)
     V["_cond_photos_both"]         = (_goh > 0 and _guest > 0)
     V["_cond_photos_guests_only"]  = (_goh <= 0 and _guest > 0)
+    V["_cond_deposit_unpaid"]      = bool(deal.get("deposit_amount")) and deal.get("deposit_status") != "paid"
+    V["_cond_deposit_paid"]        = (deal.get("deposit_status") == "paid")
+    _dep_amt = float(deal.get("deposit_amount") or 0)
+    _app_fee = float(deal.get("amount") or 0)
+    _dep_status = deal.get("deposit_status") or ""
+    V["_cond_balance_due_now"]     = _dep_amt > 0 and _app_fee > 0 and _dep_amt >= _app_fee and _dep_status not in ("paid", "not_required")
+    V["_cond_balance_due_arrival"] = not V["_cond_balance_due_now"]
     return V
 
 def fill_subject(s, V):
