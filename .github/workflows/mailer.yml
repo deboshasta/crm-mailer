@@ -52,6 +52,8 @@ jobs:
         run: pip install -r requirements.txt
       - name: Send due + send-now + notifications
         run: python send_due.py --send
+      - name: Queue due SMS drafts
+        run: python sms_due.py
       - name: Inquiry leads self-nag
         run: python inquiry_leads.py --send
       - name: Likely-no self-nag
