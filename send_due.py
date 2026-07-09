@@ -31,17 +31,73 @@ APPROVE_BASE = "https://crm-send-the-simon-show.vercel.app/api/approve-email"
 # GCal!: the "Update GCal link" button opens this paste page to store the calendar-event URL.
 GCAL_PASTE_BASE = "https://crm-send-the-simon-show.vercel.app/api/gcal-link"
 
-# trivia questions (full text) - must match the labels/keys on trivia.html
-TRIVIA_QUESTIONS = [
-    ("best_qualities",   "What are some of the guest of honor's best qualities?"),
-    ("hobbies",          "What are some of the guest of honor's hobbies?"),
-    ("everyone_knows",   "What are a few things everyone knows about the guest of honor?"),
-    ("no_one_knows",     "What are a few things almost no-one knows about the guest of honor? (obscure facts, nothing embarrassing)"),
-    ("accomplishments",  "What are some of the guest of honor's biggest accomplishments?"),
-    ("special_location", "What is a location that has special meaning to the guest of honor?"),
-    ("location_why",     "Why is this location special?"),
-    ("anything_else",    "Anything else you'd like me to know about the guest of honor?"),
-]
+# trivia questions (full text) - keys/labels must match trivia.html (crm-forms).
+# One set per situation; the mailer picks the SAME set the form showed the client
+# (guest-of-honor takes precedence, then event_type) so Simon's summary lines up.
+TRIVIA_SETS = {
+    "goh": [
+        ("best_qualities",   "What are some of the guest of honor's best qualities?"),
+        ("hobbies",          "What are some of the guest of honor's hobbies?"),
+        ("everyone_knows",   "What are a few things everyone knows about the guest of honor?"),
+        ("no_one_knows",     "What are a few things almost no-one knows about the guest of honor? (obscure facts, nothing embarrassing)"),
+        ("accomplishments",  "What are some of the guest of honor's biggest accomplishments?"),
+        ("special_location", "What is a location that has special meaning to the guest of honor?"),
+        ("location_why",     "Why is this location special?"),
+        ("anything_else",    "Anything else you'd like me to know about the guest of honor?"),
+    ],
+    "nonprofit": [
+        ("np_goals",          "What are some of your goals for this year?"),
+        ("np_place",          "What is a place that is important to your organization, and why?"),
+        ("np_accomplishments","What are some recent accomplishments of your organization?"),
+        ("np_obscure",        "What is an obscure fact about your organization, or your mission?"),
+        ("np_good",           "What are some good things that come from people supporting your organization?"),
+        ("np_number",         "What is a number that has significance to your organization? (e.g. we donated 125 kidneys, or we built 32 libraries.)"),
+        ("np_anything",       "Anything else you'd like me to know?"),
+    ],
+    "company": [
+        ("co_motto",          "What is a motto or slogan that is known within your company?"),
+        ("co_known_person",   "Who is someone everyone in the company knows?"),
+        ("co_person_qualities","What are some of this person's good qualities, or accomplishments?"),
+        ("co_surprising",     "What is something most people would find surprising about your company or industry?"),
+        ("co_accomplished",   "What is something your company has accomplished this year?"),
+        ("co_location",       "What is a special location to your company? What is special about it?"),
+        ("co_goals",          "What are your company's mid-term goals?"),
+    ],
+    "school": [
+        ("sc_learning",       "What are some things that all the students are learning about as a school?"),
+        ("sc_accomplishments","What are some accomplishments within the school that everyone is familiar with? (e.g. a student won a national award, or a team finally beat a big rival school.)"),
+        ("sc_goals",          "What are some goals that the students are working toward together as a group?"),
+        ("sc_people",         "Who are some interesting people who graduated from the school, or visited recently?"),
+        ("sc_tradition",      "What is a tradition or event that everyone at the school looks forward to?"),
+        ("sc_known_for",      "What is something your school is especially known for?"),
+        ("sc_admired",        "Who is a teacher, coach, or staff member that many students admire, and why?"),
+        ("sc_anything",       "Anything else you'd like me to know?"),
+    ],
+    "private": [
+        ("pp_funfacts",       "What are some fun facts about individuals who will be attending the party? (Please include their names.)"),
+        ("pp_inside_jokes",   "What are some inside jokes amongst the group?"),
+        ("pp_longest",        "Who has known each other the longest? Tell me a bit about them."),
+        ("pp_newest",         "Who is newest to the group? Tell me their name and a bit about them."),
+        ("pp_memory",         "What is a favorite memory or funny story this group shares?"),
+        ("pp_celebrating",    "Is anyone attending celebrating something special? Tell me about it."),
+        ("pp_together",       "What is something this group loves to do together?"),
+        ("pp_anything",       "Anything else you'd like me to know?"),
+    ],
+}
+TRIVIA_QUESTIONS = TRIVIA_SETS["goh"]                 # default / backward-compat
+TRIVIA_LABELS = {k: q for qs in TRIVIA_SETS.values() for (k, q) in qs}   # key -> label, all sets
+
+def pick_trivia_set(deal):
+    """Mirror trivia.html: GOH precedence, then event_type; municipal falls back to the non-profit
+    set (Simon plans custom municipal questions after the Closed-Won alert)."""
+    if deal.get("guest_of_honor"):
+        return TRIVIA_SETS["goh"]
+    et = deal.get("event_type")
+    if et == "non_profit": return TRIVIA_SETS["nonprofit"]
+    if et == "corporate":  return TRIVIA_SETS["company"]
+    if et == "school":     return TRIVIA_SETS["school"]
+    if et == "municipal":  return TRIVIA_SETS["nonprofit"]
+    return TRIVIA_SETS["private"]
 
 PERF = {}   # performer_id -> {first_name, full_name}, loaded in main(); PerformerName merge uses first_name
 
@@ -322,13 +378,25 @@ def trivia_notify_html(d, V, crm_url, cal_url, answers):
     b.append(f'<h2 style="margin:0 0 4px">Trivia received from {html.escape(who)}</h2>')
     b.append(f'<p style="margin:0 0 14px;color:#5f6368">For {html.escape(when)}</p>')
     b.append('<table style="border-collapse:collapse;width:100%;max-width:640px">')
-    for key,q in TRIVIA_QUESTIONS:
+    qs = pick_trivia_set(d)                 # same set the client saw (GOH precedence, then event type)
+    shown = set()
+    for key,q in qs:
+        shown.add(key)
         a=answers.get(key)
         a=("" if a is None else str(a)).strip()
         val = html.escape(a) if a else '<em style="color:#9aa0a6">(not answered)</em>'
         b.append(f'<tr><td style="padding:9px 0;border-top:1px solid #eee">'
                  f'<div style="color:#5f6368;font-size:12px;margin-bottom:3px"><b>{html.escape(q)}</b></div>'
                  f'<div>{val}</div></td></tr>')
+    # safety: surface any answered key that isn't in the chosen set (e.g. the set changed after submit)
+    for key,a in (answers or {}).items():
+        if key in shown: continue
+        a=("" if a is None else str(a)).strip()
+        if not a: continue
+        q=TRIVIA_LABELS.get(key,key)
+        b.append(f'<tr><td style="padding:9px 0;border-top:1px solid #eee">'
+                 f'<div style="color:#5f6368;font-size:12px;margin-bottom:3px"><b>{html.escape(q)}</b></div>'
+                 f'<div>{html.escape(a)}</div></td></tr>')
     b.append('</table></div>')
     return "".join(b)
 
