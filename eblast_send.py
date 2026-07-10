@@ -15,8 +15,11 @@ wiring it into the schedule now is safe. Two go-live levers (both yours):
 Run: `python eblast_send.py`   (add `--dry` to render + expand without sending or marking).
 Tracking + unsubscribe endpoints live on crm-send (private.config crm_send_base) and are done.
 """
-import sys, re, uuid, ssl, smtplib, time, datetime, json, html as _html
+import sys, re, uuid, ssl, smtplib, time, datetime, json, html as _html, urllib.request
 from email.message import EmailMessage
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from db import connect
 
 # merge-field token -> contacts column
@@ -45,6 +48,22 @@ def open_url(base, rid):          return f"{base}/api/eblast-open?r={rid}"
 def click_url(base, tok, rid):    return f"{base}/api/eblast-click?l={tok}&r={rid}"
 def unsub_url(base, tok):         return f"{base}/api/eblast-unsub?t={tok}"
 
+def fetch_inline_images(html):
+    """Download external img src URLs once per campaign so they can be CID-embedded.
+    Returns {url: (bytes, content_type)}. Failures are skipped (external URL stays)."""
+    urls = list(dict.fromkeys(re.findall(r'<img[^>]+src="(https?://[^"]+)"', html or '', re.I)))
+    cache = {}
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = resp.read()
+                ct = resp.headers.get('Content-Type', 'image/jpeg').split(';')[0].strip()
+                cache[url] = (data, ct)
+        except Exception as e:
+            print(f'eblast: could not fetch inline image {url}: {e}')
+    return cache
+
 def extract_links(html, base):
     """Distinct http(s) hrefs in the body, excluding our own tracking/unsub base and mailto/tel."""
     urls = re.findall(r'href\s*=\s*"(https?://[^"]+)"', html or "", re.I)
@@ -68,13 +87,13 @@ def personalize(html, links_map, base, rid, unsub_token, postal, preheader, sign
         pre = ('<div style="display:none;max-height:0;overflow:hidden;opacity:0">%s</div>'
                % _html.escape(preheader))
     uu = unsub_url(base, unsub_token)
-    sig_block = ('<div style="margin-top:24px">%s</div>' % signature) if signature else ''
+    sig_block = ('<div style="margin-top:16px">%s</div>' % signature) if signature else ''
     footer = (
-        '<div style="margin-top:28px;padding-top:14px;border-top:1px solid #ddd;'
-        'font-family:Arial,sans-serif;font-size:12px;color:#333;line-height:1.5">'
+        '<div style="margin-top:12px;padding-top:10px;border-top:1px solid #ddd;'
+        'font-family:Arial,sans-serif;font-size:12px;color:#555;line-height:1.6">'
         '%s<br>'
-        'You are receiving this because you are a contact of Simon Mandal Magic.<br>'
-        '<a href="%s" style="color:#333">Unsubscribe</a>'
+        'You\'re receiving this because you\'re a contact of Simon Mandal Magic. '
+        '<a href="%s" style="color:#1a73e8;text-decoration:underline">Unsubscribe</a>'
         '</div>' % (postal, uu))
     pixel = '<img src="%s" width="1" height="1" alt="" style="display:none">' % open_url(base, rid)
     return pre + body + sig_block + footer + pixel
@@ -177,19 +196,46 @@ def ensure_links(cur, camp_id, base, body):
     return existing
 
 # ---------- SMTP ----------
-def build_message(from_hdr, to_addr, reply_to, subject, html_body, text_body, unsub, msg_id):
-    msg = EmailMessage()
-    msg["From"] = from_hdr
-    msg["To"] = to_addr
-    msg["Reply-To"] = reply_to
-    msg["Subject"] = subject
-    msg["Message-ID"] = msg_id
-    # RFC 8058 one-click unsubscribe (Gmail/Yahoo bulk requirement)
-    msg["List-Unsubscribe"] = "<%s>" % unsub
-    msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
-    msg.set_content(text_body)
-    msg.add_alternative(html_body, subtype="html")
-    return msg
+def build_message(from_hdr, to_addr, reply_to, subject, html_body, text_body, unsub, msg_id, inline_imgs=None):
+    """Build RFC-compliant email. If inline_imgs provided, embeds them as CID attachments
+    so they render without 'display images' prompts."""
+    cid_html = html_body
+    cid_parts = []
+    if inline_imgs:
+        for i, (url, (data, ctype)) in enumerate(inline_imgs.items()):
+            cid = 'img%03d' % i
+            cid_html = cid_html.replace('src="%s"' % url, 'src="cid:%s"' % cid)
+            subtype = ctype.split('/')[-1] if '/' in ctype else 'jpeg'
+            img = MIMEImage(data, _subtype=subtype)
+            img.add_header('Content-ID', '<%s>' % cid)
+            img.add_header('Content-Disposition', 'inline')
+            cid_parts.append(img)
+
+    outer = MIMEMultipart('mixed')
+    outer['From'] = from_hdr
+    outer['To'] = to_addr
+    outer['Reply-To'] = reply_to
+    outer['Subject'] = subject
+    outer['Message-ID'] = msg_id
+    outer['List-Unsubscribe'] = '<%s>' % unsub
+    outer['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+
+    if cid_parts:
+        related = MIMEMultipart('related')
+        alt = MIMEMultipart('alternative')
+        alt.attach(MIMEText(text_body, 'plain', 'utf-8'))
+        alt.attach(MIMEText(cid_html, 'html', 'utf-8'))
+        related.attach(alt)
+        for p in cid_parts:
+            related.attach(p)
+        outer.attach(related)
+    else:
+        alt = MIMEMultipart('alternative')
+        alt.attach(MIMEText(text_body, 'plain', 'utf-8'))
+        alt.attach(MIMEText(html_body, 'html', 'utf-8'))
+        outer.attach(alt)
+
+    return outer
 
 def smtp_send(cfg, msg):
     if int(cfg["port"]) == 465:
@@ -227,6 +273,13 @@ def process_campaign(cur, cfg, camp, dry=False):
 
     from_hdr = "%s <%s>" % (camp["from_name"] or cfg["from_name"], camp["from_email"] or cfg["from_email"])
     reply_to = camp["reply_to"] or camp["from_email"] or cfg["from_email"]
+
+    # Pre-fetch inline images once (signature + body) — reused for every recipient
+    _img_src = (cfg.get('signature') or '') + (camp['body_html'] or '')
+    inline_imgs = fetch_inline_images(_img_src) if _img_src.strip() else {}
+    if inline_imgs:
+        print(f"eblast: pre-fetched {len(inline_imgs)} inline image(s) for CID embedding")
+
     sent = failed = skipped = 0
 
     for _ in range(per_run):
@@ -274,7 +327,7 @@ def process_campaign(cur, cfg, camp, dry=False):
             sent += 1
             continue
         try:
-            msg = build_message(from_hdr, to_addr, reply_to, subj, html_body, text_body, unsub, msg_id)
+            msg = build_message(from_hdr, to_addr, reply_to, subj, html_body, text_body, unsub, msg_id, inline_imgs)
             smtp_send(cfg, msg)
             cur.execute("update campaign_recipients set status='sent', sent_at=now(), message_id=%s where id=%s", (msg_id, rid))
             cur.execute("insert into email_events(campaign_id, recipient_id, type) values (%s,%s,'send')", (camp["id"], rid))
