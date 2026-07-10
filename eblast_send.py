@@ -71,10 +71,10 @@ def personalize(html, links_map, base, rid, unsub_token, postal, preheader, sign
     sig_block = ('<div style="margin-top:24px">%s</div>' % signature) if signature else ''
     footer = (
         '<div style="margin-top:28px;padding-top:14px;border-top:1px solid #ddd;'
-        'font-family:Arial,sans-serif;font-size:12px;color:#888;line-height:1.5">'
+        'font-family:Arial,sans-serif;font-size:12px;color:#333;line-height:1.5">'
         '%s<br>'
         'You are receiving this because you are a contact of Simon Mandal Magic.<br>'
-        '<a href="%s" style="color:#888">Unsubscribe</a>'
+        '<a href="%s" style="color:#333">Unsubscribe</a>'
         '</div>' % (postal, uu))
     pixel = '<img src="%s" width="1" height="1" alt="" style="display:none">' % open_url(base, rid)
     return pre + body + sig_block + footer + pixel
