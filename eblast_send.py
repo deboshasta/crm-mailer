@@ -112,9 +112,10 @@ def ses_ready(cfg):
     return bool(cfg["host"] and cfg["user"] and cfg["password"] and cfg["base"])
 
 # ---------- audience expansion ----------
-def build_recipients(cur, camp):
+def build_recipients(cur, camp, cfg=None):
     """Materialize campaign_recipients from the audience (once). Mirrors the composer's
-    mailable + filter logic. De-duped by lowercased email; skips suppressed/unsubscribed."""
+    mailable + filter logic. De-duped by lowercased email; skips suppressed/unsubscribed.
+    For non-justme, non-safe-mode campaigns, prepends the owner as recipient 0 (preview copy)."""
     a = camp.get("audience") or {}
     if isinstance(a, str):
         try: a = json.loads(a)
@@ -131,6 +132,13 @@ def build_recipients(cur, camp):
     where = ["c.email is not null", "c.email <> ''", "c.unsubscribed_at is null",
              "lower(c.email) not in (select email from suppressions)"]
     args = []
+    # In normal (non-safe) mode, Simon gets a preview copy as the first recipient.
+    # In safe mode, all emails already route to him — no extra row needed.
+    preview_email = (cfg.get("safe_recipient", "") if cfg else "").strip().lower()
+    if preview_email and cfg and not cfg.get("eblast_safe"):
+        cur.execute("""insert into campaign_recipients(campaign_id, contact_id, email, status)
+                       values (%s, null, %s, 'pending')""", (camp["id"], preview_email))
+        where.append("lower(c.email) != %s"); args.append(preview_email)
     if a.get("mode") == "filter":
         if a.get("event"):
             where.append("exists (select 1 from deals d where d.primary_contact_id=c.id and d.event_type=%s)")
@@ -148,7 +156,8 @@ def build_recipients(cur, camp):
         variant = ("a" if i % 2 == 0 else "b") if ab else None
         cur.execute("""insert into campaign_recipients(campaign_id, contact_id, email, status, ab_variant)
                        values (%s,%s,%s,'pending',%s)""", (camp["id"], cid, email, variant))
-    return len(rows)
+    preview_count = 1 if (preview_email and cfg and not cfg.get("eblast_safe")) else 0
+    return preview_count + len(rows)
 
 def link_map(cur, camp_id, body):
     """Get-or-create a campaign_links token per distinct target URL. Returns {url: token}."""
@@ -201,7 +210,7 @@ def process_campaign(cur, cfg, camp, dry=False):
 
     cur.execute("select count(*) from campaign_recipients where campaign_id=%s", (camp["id"],))
     if cur.fetchone()[0] == 0:
-        n = build_recipients(cur, camp)
+        n = build_recipients(cur, camp, cfg)
         print(f"eblast: expanded audience -> {n} recipient(s)")
 
     links = ensure_links(cur, camp["id"], base, camp["body_html"] or "")
