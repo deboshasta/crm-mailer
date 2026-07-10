@@ -56,9 +56,9 @@ def extract_links(html, base):
         seen.add(u); out.append(u)
     return out
 
-def personalize(html, links_map, base, rid, unsub_token, postal, preheader):
+def personalize(html, links_map, base, rid, unsub_token, postal, preheader, signature=""):
     """Return the per-recipient HTML: links rewritten to click-tracking, an open pixel, a
-    preheader, and an unsubscribe + CAN-SPAM footer appended."""
+    preheader, signature block, and an unsubscribe + CAN-SPAM footer appended."""
     body = html or ""
     # rewrite each tracked link -> click URL carrying this recipient id
     for target, tok in links_map.items():
@@ -68,6 +68,7 @@ def personalize(html, links_map, base, rid, unsub_token, postal, preheader):
         pre = ('<div style="display:none;max-height:0;overflow:hidden;opacity:0">%s</div>'
                % _html.escape(preheader))
     uu = unsub_url(base, unsub_token)
+    sig_block = ('<div style="margin-top:24px">%s</div>' % signature) if signature else ''
     footer = (
         '<div style="margin-top:28px;padding-top:14px;border-top:1px solid #ddd;'
         'font-family:Arial,sans-serif;font-size:12px;color:#888;line-height:1.5">'
@@ -76,7 +77,7 @@ def personalize(html, links_map, base, rid, unsub_token, postal, preheader):
         '<a href="%s" style="color:#888">Unsubscribe</a>'
         '</div>' % (postal, uu))
     pixel = '<img src="%s" width="1" height="1" alt="" style="display:none">' % open_url(base, rid)
-    return pre + body + footer + pixel
+    return pre + body + sig_block + footer + pixel
 
 def html_to_text(html, unsub):
     t = re.sub(r'(?is)<(script|style)[^>]*>.*?</\1>', ' ', html or "")
@@ -94,6 +95,8 @@ def load_cfg(cur):
     s = cur.fetchone()
     cur.execute("select key, value from private.config")
     p = {k: v for k, v in cur.fetchall()}
+    cur.execute("select body_html from templates where key='_signature' limit 1")
+    sig_row = cur.fetchone()
     return {
         "safe_recipient": str(s[1]),
         "from_email": str(s[2]), "from_name": s[3] or "Simon Mandal",
@@ -102,6 +105,7 @@ def load_cfg(cur):
         "eblast_safe": (p.get("eblast_safe_mode", "true").lower() != "false"),   # default ON
         "host": p.get("ses_smtp_host"), "port": int(p.get("ses_smtp_port") or "465"),
         "user": p.get("ses_smtp_user"), "password": p.get("ses_smtp_password"),
+        "signature": (sig_row[0] or "") if sig_row else "",
     }
 
 def ses_ready(cfg):
@@ -250,7 +254,7 @@ def process_campaign(cur, cfg, camp, dry=False):
         raw_subject = camp["subject_b"] if (variant == "b" and camp["subject_b"]) else camp["subject"]
         subject = merge_fields(raw_subject, contact_row)
         unsub = unsub_url(base, unsub_token)
-        html_body = personalize(merge_fields(camp["body_html"] or "", contact_row), links, base, rid, unsub_token, cfg["postal"], merge_fields(camp["preheader"] or "", contact_row))
+        html_body = personalize(merge_fields(camp["body_html"] or "", contact_row), links, base, rid, unsub_token, cfg["postal"], merge_fields(camp["preheader"] or "", contact_row), cfg.get("signature", ""))
         text_body = html_to_text(merge_fields(camp["body_html"] or "", contact_row), unsub)
         msg_id = "<%s@thesimonshow.com>" % uuid.uuid4().hex
         to_addr = cfg["safe_recipient"] if cfg["eblast_safe"] else email
