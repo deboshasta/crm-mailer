@@ -317,13 +317,14 @@ def main():
                           ab_test, preheader, body_html, throttle_per_hour, scheduled_at, audience, stats
                    from campaigns
                    where status in ('scheduled','sending') and coalesce(scheduled_at, now()) <= now()
-                   order by created_at limit 1""")
-    row = cur.fetchone()
-    if not row:
+                   order by created_at""")
+    rows = cur.fetchall()
+    if not rows:
         print("eblast: no campaign due"); c.close(); return
     cols = ["id","name","status","from_name","from_email","reply_to","subject","subject_b",
             "ab_test","preheader","body_html","throttle_per_hour","scheduled_at","audience","stats"]
-    process_campaign(cur, cfg, dict(zip(cols, row)), dry)
+    for row in rows:
+        process_campaign(cur, cfg, dict(zip(cols, row)), dry)
     c.close()
 
 if __name__ == "__main__":
