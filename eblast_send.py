@@ -19,6 +19,23 @@ import sys, re, uuid, ssl, smtplib, time, datetime, json, html as _html
 from email.message import EmailMessage
 from db import connect
 
+# merge-field token -> contacts column
+_FIELD_MAP = {
+    'FirstName': 'first_name', 'LastName': 'last_name',
+    'FullName':  'full_name',  'Email':    'email',    'Company': 'company',
+}
+
+def merge_fields(text, row):
+    """Replace {{Token|fallback}} placeholders with contact values (or fallback if blank)."""
+    if not text:
+        return text or ''
+    def _sub(m):
+        tok, fb = m.group(1), (m.group(2) or '')
+        col = _FIELD_MAP.get(tok)
+        val = row.get(col) if (col and row) else None
+        return str(val) if (val is not None and str(val).strip()) else fb
+    return re.sub(r'\{\{(\w+)(?:\|([^}]*))?\}\}', _sub, text)
+
 MAX_PER_RUN   = 200                       # hard cap per run (throttle_per_hour still applies below)
 CLAIM_STATUS  = "sending"                 # interim per-recipient status while a send is in flight
 DEFAULT_POSTAL = "Simon Mandal Magic &middot; 9 Mine Ave, Bernardsville, NJ 07924, USA"
@@ -205,11 +222,11 @@ def process_campaign(cur, cfg, camp, dry=False):
                        where id = (select id from campaign_recipients
                                    where campaign_id=%s and status='pending'
                                    order by created_at limit 1 for update skip locked)
-                       returning id, email, ab_variant, unsub_token""", (CLAIM_STATUS, camp["id"]))
+                       returning id, email, ab_variant, unsub_token, contact_id""", (CLAIM_STATUS, camp["id"]))
         got = cur.fetchone()
         if not got:
             break
-        rid, email, variant, unsub_token = got
+        rid, email, variant, unsub_token, contact_id = got
         low = (email or "").lower()
         # suppression re-check at send time
         cur.execute("select 1 from suppressions where email=%s union select 1 from contacts where lower(email)=%s and unsubscribed_at is not null limit 1", (low, low))
@@ -219,10 +236,22 @@ def process_campaign(cur, cfg, camp, dry=False):
             skipped += 1
             continue
 
-        subject = camp["subject_b"] if (variant == "b" and camp["subject_b"]) else camp["subject"]
+        # per-recipient merge field data
+        contact_row = {}
+        if contact_id:
+            cur.execute("select first_name, last_name, full_name, email, company from contacts where id=%s", (contact_id,))
+            r = cur.fetchone()
+            if r:
+                fn, ln = (r[0] or ''), (r[1] or '')
+                contact_row = {'first_name': fn, 'last_name': ln,
+                               'full_name': (r[2] or (fn + ' ' + ln).strip()),
+                               'email': r[3] or '', 'company': r[4] or ''}
+
+        raw_subject = camp["subject_b"] if (variant == "b" and camp["subject_b"]) else camp["subject"]
+        subject = merge_fields(raw_subject, contact_row)
         unsub = unsub_url(base, unsub_token)
-        html_body = personalize(camp["body_html"] or "", links, base, rid, unsub_token, cfg["postal"], camp["preheader"])
-        text_body = html_to_text(camp["body_html"] or "", unsub)
+        html_body = personalize(merge_fields(camp["body_html"] or "", contact_row), links, base, rid, unsub_token, cfg["postal"], merge_fields(camp["preheader"] or "", contact_row))
+        text_body = html_to_text(merge_fields(camp["body_html"] or "", contact_row), unsub)
         msg_id = "<%s@thesimonshow.com>" % uuid.uuid4().hex
         to_addr = cfg["safe_recipient"] if cfg["eblast_safe"] else email
         subj = ("[EBLAST-SAFE -> %s] %s" % (email, subject or "")) if cfg["eblast_safe"] else (subject or "")
