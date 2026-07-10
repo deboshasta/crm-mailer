@@ -79,15 +79,17 @@ def personalize(html, links_map, base, rid, unsub_token, postal, preheader, sign
     """Return the per-recipient HTML: links rewritten to click-tracking, an open pixel, a
     preheader, signature block, and an unsubscribe + CAN-SPAM footer appended."""
     body = html or ""
-    # rewrite each tracked link -> click URL carrying this recipient id
+    sig_raw = signature or ""
+    # rewrite each tracked link -> click URL carrying this recipient id (body + signature)
     for target, tok in links_map.items():
         body = body.replace('href="%s"' % target, 'href="%s"' % click_url(base, tok, rid))
+        sig_raw = sig_raw.replace('href="%s"' % target, 'href="%s"' % click_url(base, tok, rid))
     pre = ""
     if preheader:
         pre = ('<div style="display:none;max-height:0;overflow:hidden;opacity:0">%s</div>'
                % _html.escape(preheader))
     uu = unsub_url(base, unsub_token)
-    sig_block = ('<div style="margin-top:16px">%s</div>' % signature) if signature else ''
+    sig_block = ('<div style="margin-top:16px">%s</div>' % sig_raw) if sig_raw else ''
     footer = (
         '<div style="margin-top:12px;padding-top:10px;border-top:1px solid #ddd;'
         'font-family:Arial,sans-serif;font-size:12px;color:#555;line-height:1.6">'
@@ -186,9 +188,9 @@ def link_map(cur, camp_id, body):
         m[url] = tok
     return m
 
-def ensure_links(cur, camp_id, base, body):
+def ensure_links(cur, camp_id, base, body, sig=""):
     existing = link_map(cur, camp_id, body)
-    for url in extract_links(body, base):
+    for url in extract_links((body or "") + (sig or ""), base):
         if url in existing: continue
         cur.execute("""insert into campaign_links(campaign_id, target_url) values (%s,%s) returning token""",
                     (camp_id, url))
@@ -259,7 +261,7 @@ def process_campaign(cur, cfg, camp, dry=False):
         n = build_recipients(cur, camp, cfg)
         print(f"eblast: expanded audience -> {n} recipient(s)")
 
-    links = ensure_links(cur, camp["id"], base, camp["body_html"] or "")
+    links = ensure_links(cur, camp["id"], base, camp["body_html"] or "", cfg.get("signature",""))
 
     # throttle: don't exceed throttle_per_hour across the trailing hour
     cur.execute("""select count(*) from campaign_recipients
