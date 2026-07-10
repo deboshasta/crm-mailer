@@ -98,6 +98,15 @@ def build_recipients(cur, camp):
     if isinstance(a, str):
         try: a = json.loads(a)
         except Exception: a = {}
+    if a.get("mode") == "justme":
+        cur.execute("select safe_mode_recipient from settings where id=1")
+        row = cur.fetchone()
+        safe_email = ((row[0] if row else None) or "").strip().lower()
+        if not safe_email:
+            print("eblast: justme mode but no safe_mode_recipient set"); return 0
+        cur.execute("""insert into campaign_recipients(campaign_id, contact_id, email, status)
+                       values (%s, null, %s, 'pending')""", (camp["id"], safe_email))
+        return 1
     where = ["c.email is not null", "c.email <> ''", "c.unsubscribed_at is null",
              "lower(c.email) not in (select email from suppressions)"]
     args = []
