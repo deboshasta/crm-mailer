@@ -669,10 +669,11 @@ def main():
             if send_date < SEQ_START or send_date > TODAY: continue
             e = st.get(key) or {}
             if e.get("sent") or e.get("cancelled"): continue
-            if not contact.get("email"): continue
             V=merge_values(d,contact)
             blanks = missing_fields(t, e, V)
-            if blanks:
+            _email_ok = bool(contact.get("email"))
+            if not _email_ok and not APPROVAL_MODE: continue
+            if blanks and not APPROVAL_MODE:
                 # PAUSE: a required merge field is blank -> do NOT send. Flag it so blocked_digest.py
                 # nags Simon daily and the re-check pass below auto-sends it once the field is filled.
                 was_blocked = bool(e.get("blocked"))
@@ -694,14 +695,26 @@ def main():
                 # HOLD for approval: never auto-send. Store the email WITHOUT the signature - the authorize
                 # email shows a clean preview, and the signature is added inline (CID image) on Approve so it
                 # renders without "display images". Store a token for the Approve/Cancel links.
+                # If email or merge fields are missing, queue it anyway with missing_fields so the
+                # approval queue UI can surface them and let Simon fill them inline.
                 was_pending = bool(e.get("pending_approval"))
                 token = e.get("approve_token") or secrets.token_urlsafe(24)
                 hbody = e["body"] if e.get("body") is not None else render_html(tbody, V, "")   # no signature
-                st[key] = {**e, "pending_approval": True, "approve_token": token,
-                           "to": contact["email"], "subject": subj, "body": hbody,
-                           "pending_since": e.get("pending_since") or TODAY.isoformat()}
+                _missing = ([] if _email_ok else ["contact_email"]) + blanks
+                new_entry = {**e, "pending_approval": True, "approve_token": token,
+                             "to": contact.get("email") or "",
+                             "subject": subj, "body": hbody,
+                             "pending_since": e.get("pending_since") or TODAY.isoformat()}
+                if _missing:
+                    new_entry["missing_fields"] = _missing
+                elif "missing_fields" in new_entry:
+                    del new_entry["missing_fields"]
+                st[key] = new_entry
                 if not was_pending:
-                    held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key, contact["email"], subj, hbody, token, d["id"]))
+                    _note = ("Cannot send yet — missing: " + ", ".join(_missing)) if _missing else None
+                    held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key,
+                                     contact.get("email") or "(no email)", subj, hbody, token, d["id"],
+                                     *([_note] if _note else [])))
                 if SEND:
                     cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
                 continue
