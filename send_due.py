@@ -708,12 +708,12 @@ def main():
             due.append((d,key,contact["email"],subj,body,st))
 
     # CLIENT CADENCE WINDOW (Simon 2026-07-04): only send the due-today client emails between
-    # 10am and 12pm Eastern, so they cluster at a consistent time each day. Send-now, the
-    # trivia/photo notifications, self gig check-ins and the self-nags are NOT gated - they run
-    # whenever the sweep runs. Pass --anytime to bypass the window (manual / one-off runs).
-    _cad_ok = ('--anytime' in sys.argv) or (10 <= tz.hour() <= 12)
+    # 9am and 9pm Eastern. Send-now, the trivia/photo notifications, self gig check-ins and the
+    # self-nags are NOT gated - they run whenever the sweep runs. Pass --anytime to bypass the
+    # window (manual / one-off runs).
+    _cad_ok = ('--anytime' in sys.argv) or (9 <= tz.hour() <= 21)
     print(f"{TODAY}  -  {len(due)} email(s) due today  (mode: {'SEND' if SEND else 'DRY-RUN'})"
-          + ('' if _cad_ok else f'  [holding: outside 10am-12pm ET window, now {tz.hour()}:00 ET]'))
+          + ('' if _cad_ok else f'  [holding: outside 9am-9pm ET window, now {tz.hour()}:00 ET]'))
     for (d,key,to,subj,body,st) in due:
         print(f"  -> {to}  |  [{key}]  {subj[:70]}")
         if SEND and _cad_ok:
