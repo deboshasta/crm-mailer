@@ -477,7 +477,7 @@ def fill_subject(s, V):
 
 # Once the Magic Castle invite has been sent for a deal, drop the "I'll email you the invite in ~10 min"
 # heads-up line from any other ladder email (it would be stale / contradictory).
-_MC_HEADSUP_RE = re.compile(r"(?im)^.*(?:email you an invite to the magic castle|arrive in the next ten minutes).*(?:\r?\n)?")
+_MC_HEADSUP_RE = re.compile(r"(?im)^.*(?:email you an invite to the magic castle|arrive (?:in the next ten minutes|within an hour)).*(?:\r?\n)?")
 def _strip_mc_headsup(raw):
     return re.sub(r"\n{3,}", "\n\n", _MC_HEADSUP_RE.sub("", raw or ""))
 
@@ -888,7 +888,7 @@ def main():
         st = d.get("cue_state") or {}
         if isinstance(st,str): st=json.loads(st or "{}")
         e = st.get("magic_castle") or {}
-        if e.get("sent") or e.get("cancelled") or e.get("pending_approval"): continue   # done, cancelled, or already awaiting approval
+        if e.get("sent") or e.get("cancelled") or e.get("pending_approval") or e.get("send_now"): continue   # done, cancelled, awaiting approval, or already approved+queued
         contact = CB.get(d.get("primary_contact_id")) or {}
         if not contact.get("email"): continue
         version = None
