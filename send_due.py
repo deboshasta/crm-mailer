@@ -442,6 +442,7 @@ def merge_values(deal, contact):
         "BalanceAmount": _num(deal.get("balance_amount")),
         "Month": (MO[sd.month-1] if sd else MO[TODAY.month-1]), "Year": str(sd.year if sd else TODAY.year),
         "Company": deal.get("company") or "", "GuestOfHonor": deal.get("guest_of_honor") or "",
+        "GuestOfHonorMagicLine": (f"{deal.get('guest_of_honor')} has gotten obsessed with magic and is doing the show." if deal.get("guest_of_honor") else "One of our guests has gotten obsessed with magic, and is going to do the show himself."),
         "ProposalLink": deal.get("proposal_link") or "",
         "CustomizeLink": (f"{CUSTOMIZE_BASE}?t={deal.get('customize_token')}" if deal.get("customize_token") else ""),
         "PerformerName": (PERF.get(deal.get("performer_id")) or {}).get("first_name") or "",
