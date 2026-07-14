@@ -150,6 +150,20 @@ def build_recipients(cur, camp, cfg=None):
         cur.execute("""insert into campaign_recipients(campaign_id, contact_id, email, status)
                        values (%s, null, %s, 'pending')""", (camp["id"], safe_email))
         return 1
+    if a.get("mode") == "simon":
+        cur.execute("select safe_mode_recipient from settings where id=1")
+        row = cur.fetchone()
+        safe_email = ((row[0] if row else None) or "").strip().lower()
+        if not safe_email:
+            print("eblast: simon mode but no safe_mode_recipient set"); return 0
+        cur.execute("select id from contacts where lower(email)=%s limit 1", (safe_email,))
+        crow = cur.fetchone()
+        contact_id = crow[0] if crow else None
+        for _ in range(5):
+            cur.execute("""insert into campaign_recipients(campaign_id, contact_id, email, status)
+                           values (%s, %s, %s, 'pending')""", (camp["id"], contact_id, safe_email))
+        print(f"eblast: simon group -> 5 test recipients to {safe_email}")
+        return 5
     where = ["c.email is not null", "c.email <> ''", "c.unsubscribed_at is null",
              "lower(c.email) not in (select email from suppressions)"]
     args = []
@@ -307,13 +321,13 @@ def process_campaign(cur, cfg, camp, dry=False):
         # per-recipient merge field data
         contact_row = {}
         if contact_id:
-            cur.execute("select first_name, last_name, full_name, email, company from contacts where id=%s", (contact_id,))
+            cur.execute("select first_name, last_name, full_name, email from contacts where id=%s", (contact_id,))
             r = cur.fetchone()
             if r:
                 fn, ln = (r[0] or ''), (r[1] or '')
                 contact_row = {'first_name': fn, 'last_name': ln,
                                'full_name': (r[2] or (fn + ' ' + ln).strip()),
-                               'email': r[3] or '', 'company': r[4] or ''}
+                               'email': r[3] or ''}
 
         raw_subject = camp["subject_b"] if (variant == "b" and camp["subject_b"]) else camp["subject"]
         subject = merge_fields(raw_subject, contact_row)

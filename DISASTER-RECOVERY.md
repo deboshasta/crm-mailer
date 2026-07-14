@@ -97,7 +97,7 @@ manager), because if the machine or GitHub is unreachable you still need them.**
    ```
 2. **reCAPTCHA:** the site key is domain-locked to `crm.thesimonshow.com`. If submissions fail "could not verify," the key's allowed domains (Google reCAPTCHA admin) or the `recaptcha_secret` in `private.config` is wrong.
 3. On success the form redirects the top window to `www.thesimonshow.com/thanks` (Google Ads conversion). That WordPress page must exist. The in-form card is only a fallback.
-4. New submissions call the `submit_booking` RPC, which creates the inquiry deal + fires the new-lead email, the client acknowledgment, and the SMS (`7324926071@vtext.com`).
+4. New submissions call the `submit_booking` RPC, which creates the inquiry deal + fires the new-lead email, the client acknowledgment, and an SMS to Simon's phone (number stored in the DB, not here).
 
 ---
 
