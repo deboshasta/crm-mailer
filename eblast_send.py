@@ -265,15 +265,12 @@ def smtp_send(cfg, msg):
 # ---------- per-campaign orchestration ----------
 def process_campaign(cur, cfg, camp, dry=False):
     base = cfg["base"]
-    if camp["status"] != "sending":
-        cur.execute("update campaigns set status='sending', sent_at=coalesce(sent_at, now()) where id=%s", (camp["id"],))
-    # recover any rows left 'sending' by a crashed prior run (mailer concurrency-group => no live overlap)
-    cur.execute("update campaign_recipients set status='pending' where campaign_id=%s and status=%s", (camp["id"], CLAIM_STATUS))
-
-    cur.execute("select count(*) from campaign_recipients where campaign_id=%s", (camp["id"],))
-    if cur.fetchone()[0] == 0:
+    if camp["status"] == "scheduled":
         n = build_recipients(cur, camp, cfg)
         print(f"eblast: expanded audience -> {n} recipient(s)")
+    cur.execute("update campaigns set status='sending', sent_at=coalesce(sent_at, now()) where id=%s", (camp["id"],))
+    # recover any rows left 'sending' by a crashed prior run (mailer concurrency-group => no live overlap)
+    cur.execute("update campaign_recipients set status='pending' where campaign_id=%s and status=%s", (camp["id"], CLAIM_STATUS))
 
     links = ensure_links(cur, camp["id"], base, camp["body_html"] or "", cfg.get("signature",""))
 
