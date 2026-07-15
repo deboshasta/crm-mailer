@@ -4,7 +4,7 @@ aren't cancelled or already sent, and mark them sent. FLAG-mode emails are never
 auto-sent (they are Focus reminders). Dry-run by default; pass --send to actually send.
 Safe-mode still routes every send to Simon until mail_safe_mode is turned off.
 """
-import sys, json, html, re, datetime, urllib.parse, secrets
+import sys, json, html, re, datetime, urllib.parse, secrets, base64
 from db import connect
 import mailer
 import tz
@@ -1070,6 +1070,37 @@ def main():
             join.push("CRM emails FAILED", "%d email send(s) failed in the last sweep" % len(_send_fails), c)
         except Exception:
             pass
+
+    # ---- RECEIPT PDF PRE-GENERATION: for _depreceipt_* items pending approval that have no
+    #      pdf_b64 yet, generate the PDF now and store it as base64 so approve-email.js can
+    #      attach it without needing to run Python. ----
+    _pdf_gen = 0
+    for d in deals:
+        st = d.get("cue_state") or {}
+        if isinstance(st, str): st = json.loads(st or "{}")
+        _changed = False
+        for key, e in list(st.items()):
+            if not key.startswith("_depreceipt_"): continue
+            if not e.get("pending_approval"): continue
+            if e.get("sent") or e.get("cancelled"): continue
+            if e.get("pdf_b64"): continue
+            contact = CB.get(d.get("primary_contact_id")) or {}
+            try:
+                paid_in_full = (float(d.get("deposit_amount") or 0) > 0 and
+                                float(d.get("deposit_amount") or 0) == float(d.get("amount") or 0))
+            except Exception:
+                paid_in_full = False
+            try:
+                import receipt as _rcpt
+                fname, pdf_bytes, _mime = _rcpt.make_receipt(d, contact, paid_in_full=paid_in_full)
+                st[key] = {**e, "pdf_b64": base64.b64encode(pdf_bytes).decode(), "pdf_filename": fname}
+                _changed = True; _pdf_gen += 1
+                print(f"  -> [receipt-pdf] generated {fname} for {key}")
+            except Exception as _pdf_ex:
+                print(f"  !! receipt PDF gen failed for {key}: {_pdf_ex}")
+        if SEND and _changed:
+            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+    if _pdf_gen: print(f"{TODAY}  -  {_pdf_gen} receipt PDF(s) pre-generated for pending-approval items.")
 
     # HEARTBEAT (Phase 2): record that the mailer ran, and cross-check the backup stamp so a dead
     # nightly backup is caught within a sweep (not just by the dedicated heartbeat cron). Best-effort.
