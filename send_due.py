@@ -637,6 +637,10 @@ def main():
                         if basef:
                             sdatef = basef + datetime.timedelta(days=off)
                             ef = st.get(key) or {}
+                            _efov = ef.get("date_override")
+                            if _efov:
+                                try: sdatef = datetime.date.fromisoformat(_efov)
+                                except (ValueError, TypeError): pass
                             if (SEQ_START <= sdatef <= TODAY and contact.get("email")
                                     and not ef.get("sent") and not ef.get("cancelled")
                                     and not ef.get("pending_approval") and not ef.get("flag_approval_sent")
@@ -664,12 +668,17 @@ def main():
                 send_date = _ge_send_date(d, key)
                 if send_date is None:
                     continue
+            e = st.get(key) or {}
+            if e.get("sent") or e.get("cancelled"): continue
+            # date_override: Simon can reschedule an email via the CRM; use that date instead of the ladder default.
+            _ov = e.get("date_override")
+            if _ov:
+                try: send_date = datetime.date.fromisoformat(_ov)
+                except (ValueError, TypeError): pass
             # Migration cutover: SEQ_START is the send-date FLOOR (the day the new CRM took over from Zoho).
             # Skip anything scheduled BEFORE it (Zoho's backlog - permanently). Send today's, and CATCH UP any
             # scheduled on/after the floor that slipped (missed). Never re-send the pre-cutover backlog.
             if send_date < SEQ_START or send_date > TODAY: continue
-            e = st.get(key) or {}
-            if e.get("sent") or e.get("cancelled"): continue
             V=merge_values(d,contact)
             blanks = missing_fields(t, e, V)
             _email_ok = bool(contact.get("email"))
