@@ -678,7 +678,15 @@ def main():
             # Migration cutover: SEQ_START is the send-date FLOOR (the day the new CRM took over from Zoho).
             # Skip anything scheduled BEFORE it (Zoho's backlog - permanently). Send today's, and CATCH UP any
             # scheduled on/after the floor that slipped (missed). Never re-send the pre-cutover backlog.
-            if send_date < SEQ_START or send_date > TODAY: continue
+            if send_date < SEQ_START or send_date > TODAY:
+                # If this item was queued for approval but then rescheduled to a future date via
+                # date_override, clear the stale pending state from in-memory st so any subsequent
+                # full cue_state write for this deal doesn't restore it to the approval queue.
+                if _ov and e.get("pending_approval"):
+                    st[key] = {k: v for k, v in e.items() if k not in ("pending_approval", "pending_since")}
+                    if SEND:
+                        cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                continue
             V=merge_values(d,contact)
             blanks = missing_fields(t, e, V)
             _email_ok = bool(contact.get("email"))
