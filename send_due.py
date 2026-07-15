@@ -672,20 +672,27 @@ def main():
             if e.get("sent") or e.get("cancelled"): continue
             # date_override: Simon can reschedule an email via the CRM; use that date instead of the ladder default.
             _ov = e.get("date_override")
+            _ov_date = None
             if _ov:
-                try: send_date = datetime.date.fromisoformat(_ov)
-                except (ValueError, TypeError): pass
+                try:
+                    _ov_date = datetime.date.fromisoformat(_ov)
+                    send_date = _ov_date
+                except (ValueError, TypeError):
+                    pass
+            print(f"  [cue] {d['id'][:8]} {key}: base={base} send_date={send_date} ov={_ov!r} pa={e.get('pending_approval')}")
             # Migration cutover: SEQ_START is the send-date FLOOR (the day the new CRM took over from Zoho).
             # Skip anything scheduled BEFORE it (Zoho's backlog - permanently). Send today's, and CATCH UP any
             # scheduled on/after the floor that slipped (missed). Never re-send the pre-cutover backlog.
             if send_date < SEQ_START or send_date > TODAY:
-                # If this item was queued for approval but then rescheduled to a future date via
-                # date_override, clear the stale pending state from in-memory st so any subsequent
-                # full cue_state write for this deal doesn't restore it to the approval queue.
-                if _ov and e.get("pending_approval"):
-                    st[key] = {k: v for k, v in e.items() if k not in ("pending_approval", "pending_since")}
-                    if SEND:
-                        cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                # date_override pushed this into the future (or past before cutover): clean any stale
+                # pending_approval from in-memory st AND from the DB so it never shows in the approval queue.
+                if _ov_date and _ov_date > TODAY:
+                    _needs_clean = e.get("pending_approval") or e.get("pending_since")
+                    if _needs_clean:
+                        st[key] = {k: v for k, v in e.items() if k not in ("pending_approval", "pending_since")}
+                        if SEND:
+                            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                            print(f"    -> cleared stale pending_approval for {key} (date_override={_ov})")
                 continue
             V=merge_values(d,contact)
             blanks = missing_fields(t, e, V)
@@ -710,6 +717,16 @@ def main():
                 tbody = _strip_mc_headsup(tbody)
             body = e["body"] if e.get("body") is not None else render_html(tbody,V,signature)
             if APPROVAL_MODE:
+                # Safety valve: if date_override puts this email in the future, never queue for approval.
+                # The primary guard is the send_date check above; this is a belt-and-suspenders fallback
+                # in case send_date was somehow stale when the check ran.
+                if _ov_date and _ov_date > TODAY:
+                    _needs_clean = e.get("pending_approval") or e.get("pending_since")
+                    if _needs_clean:
+                        st[key] = {k: v for k, v in e.items() if k not in ("pending_approval", "pending_since")}
+                        if SEND:
+                            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                    continue
                 # HOLD for approval: never auto-send. Store the email WITHOUT the signature - the authorize
                 # email shows a clean preview, and the signature is added inline (CID image) on Approve so it
                 # renders without "display images". Store a token for the Approve/Cancel links.
