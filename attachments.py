@@ -14,7 +14,12 @@ def _static(diskname, sendname, mime="application/pdf"):
 def attachments_for(key, deal, contact):
     """Attachments a given template needs when sent. Empty list for plain emails."""
     if key == "deposit_receipt":
-        return [receipt.make_receipt(deal, contact)]
+        try:
+            paid_in_full = (float(deal.get("deposit_amount") or 0) > 0 and
+                            float(deal.get("deposit_amount") or 0) == float(deal.get("amount") or 0))
+        except Exception:
+            paid_in_full = False
+        return [receipt.make_receipt(deal, contact, paid_in_full=paid_in_full)]
     if key == "w9_email":
         return [_static("w9.pdf", "W9 - Simon Show Productions LLC.pdf")]
     if key == "magic_castle":

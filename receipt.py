@@ -27,7 +27,7 @@ def _date_str(v):
     except Exception:
         return str(v)
 
-def make_receipt(deal, contact, issued=None):
+def make_receipt(deal, contact, issued=None, paid_in_full=False):
     """Returns (filename, pdf_bytes, mime) ready for mailer.send_email(attachments=[...])."""
     issued = issued or datetime.date.today()
     show_str = _date_str(deal.get("show_date"))
@@ -79,9 +79,14 @@ def make_receipt(deal, contact, issued=None):
     pdf.cell(W * 0.32, 8.5, "Amount  ", align="R", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_font("Helvetica", "", 10.5)
     occ = deal.get("occasion") or "event"
-    desc = f"  Deposit - {occ}" + (f" on {show_str}" if show_str else "")
+    if paid_in_full:
+        desc = f"  Full Payment - {occ}" + (f" on {show_str}" if show_str else "")
+        line_amt = deal.get("amount")
+    else:
+        desc = f"  Deposit - {occ}" + (f" on {show_str}" if show_str else "")
+        line_amt = deal.get("deposit_amount")
     pdf.cell(W * 0.68, 9, desc)
-    pdf.cell(W * 0.32, 9, _money(deal.get("deposit_amount")) + "  ", align="R",
+    pdf.cell(W * 0.32, 9, _money(line_amt) + "  ", align="R",
              new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_draw_color(*SOFT); pdf.set_line_width(0.3)
     y = pdf.get_y(); pdf.line(20, y, 20 + W, y); pdf.ln(4)
@@ -96,17 +101,27 @@ def make_receipt(deal, contact, issued=None):
         pdf.set_text_color(*(GOLD if gold else DARK)); pdf.set_font("Helvetica", "B" if bold else "", 10.5)
         pdf.cell(W * 0.15, 6.5, _money(value) + "  ", align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
-    summ("Appearance fee", deal.get("amount"))
-    summ("Deposit received", deal.get("deposit_amount"), bold=True, gold=True)
-    summ("Balance due on arrival", deal.get("balance_amount"), bold=True)
+    if paid_in_full:
+        summ("Total paid", deal.get("amount"), bold=True, gold=True)
+        summ("Balance remaining", 0, bold=True)
+    else:
+        summ("Appearance fee", deal.get("amount"))
+        summ("Deposit received", deal.get("deposit_amount"), bold=True, gold=True)
+        summ("Balance due on arrival", deal.get("balance_amount"), bold=True)
     pdf.ln(8)
 
     # ---- thank-you note ----
     pdf.set_text_color(*DARK); pdf.set_font("Helvetica", "", 10.5)
-    pdf.multi_cell(0, 6,
-        "Thank you so much - your deposit is received and your date is locked in. "
-        "The remaining balance is due on arrival the day of the event. "
-        "If you have any questions at all, just reply to this email or give me a call.")
+    if paid_in_full:
+        pdf.multi_cell(0, 6,
+            "Thank you so much - you are paid in full and your date is locked in. "
+            "I can't wait for you to see how much fun everyone has! "
+            "If you have any questions at all, just reply to this email or give me a call.")
+    else:
+        pdf.multi_cell(0, 6,
+            "Thank you so much - your deposit is received and your date is locked in. "
+            "The remaining balance is due on arrival the day of the event. "
+            "If you have any questions at all, just reply to this email or give me a call.")
     pdf.ln(6)
     pdf.set_font("Helvetica", "", 10.5)
     pdf.cell(0, 6, "With gratitude,", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -114,4 +129,5 @@ def make_receipt(deal, contact, issued=None):
     pdf.cell(0, 6, "Simon Mandal", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     data = pdf.output()  # bytes/bytearray in fpdf2
-    return (f"Deposit-Receipt-{receipt_no}.pdf", bytes(data), "application/pdf")
+    fname = "Receipt-" if paid_in_full else "Deposit-Receipt-"
+    return (f"{fname}{receipt_no}.pdf", bytes(data), "application/pdf")
