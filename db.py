@@ -5,8 +5,9 @@ falling back to ../.env when present (for local use). The only real secret is DB
 Optional overrides DB_HOST / DB_USER / DB_PORT let the cloud runner use Supabase's IPv4
 pooler (GitHub runners are IPv4-only) instead of the direct IPv6 host.
 """
-import ssl, os
-import pg8000.dbapi as pg
+import os
+import psycopg2
+import psycopg2.extras
 
 _env = {}
 _envpath = os.path.join(os.path.dirname(__file__), "..", ".env")
@@ -23,14 +24,17 @@ def _cfg(k, default=""):
 
 REF = _cfg("SUPABASE_URL").split("//")[-1].split(".")[0]
 PW  = _cfg("DB_PASSWORD")
-DB_HOST = _cfg("DB_HOST") or f"db.{REF}.supabase.co"   # cloud can override with the IPv4 pooler host
-DB_USER = _cfg("DB_USER") or "postgres"                # pooler uses "postgres.<ref>"
+DB_HOST = _cfg("DB_HOST") or f"db.{REF}.supabase.co"
+DB_USER = _cfg("DB_USER") or "postgres"
 DB_PORT = int(_cfg("DB_PORT") or "5432")
 
-_ctx = ssl.create_default_context()
-_ctx.check_hostname = False
-_ctx.verify_mode = ssl.CERT_NONE
-
 def connect():
-    return pg.connect(user=DB_USER, password=PW, host=DB_HOST,
-                      port=DB_PORT, database="postgres", ssl_context=_ctx, timeout=20)
+    conn = psycopg2.connect(
+        user=DB_USER, password=PW, host=DB_HOST,
+        port=DB_PORT, dbname="postgres", sslmode="require",
+        connect_timeout=20
+    )
+    # Auto-parse JSON/JSONB columns to Python dicts (pg8000 did this by default)
+    psycopg2.extras.register_default_json(conn)
+    psycopg2.extras.register_default_jsonb(conn)
+    return conn

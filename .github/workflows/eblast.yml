@@ -10,6 +10,7 @@ on:
     # Every 5 min, 9am-10pm ET (UTC-4 summer / UTC-5 winter)
     - cron: '*/5 13-23 * * *'
     - cron: '*/5 0-2 * * *'
+  workflow_dispatch:
   repository_dispatch:
     types: [eblast-send]
 
