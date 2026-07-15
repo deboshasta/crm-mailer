@@ -670,6 +670,23 @@ def main():
                     continue
             e = st.get(key) or {}
             if e.get("sent") or e.get("cancelled"): continue
+            # HARD EXIT: if date_override is a future date, skip immediately before computing send_date,
+            # merge values, or anything else. This is the authoritative guard — no downstream code path
+            # can accidentally re-queue an email that Simon has pushed to the future.
+            _ov_pre = e.get("date_override")
+            if _ov_pre:
+                try:
+                    _ov_pre_date = datetime.date.fromisoformat(_ov_pre)
+                    if _ov_pre_date > TODAY:
+                        if e.get("pending_approval") or e.get("pending_since") or e.get("approve_token"):
+                            st[key] = {k: v for k, v in e.items()
+                                       if k not in ("pending_approval", "pending_since", "approve_token")}
+                            if SEND:
+                                cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                                print(f"  [hard-exit] {d['id'][:8]} {key}: cleared stale approval fields (date_override={_ov_pre})")
+                        continue
+                except (ValueError, TypeError):
+                    pass
             # date_override: Simon can reschedule an email via the CRM; use that date instead of the ladder default.
             _ov = e.get("date_override")
             _ov_date = None
