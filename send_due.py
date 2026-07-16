@@ -434,6 +434,7 @@ def merge_values(deal, contact):
         "ClientFirstName":first, "ClientFullName":_cap_full(contact),
         "ClientEmail":contact.get("email") or "", "ClientPhone":contact.get("phone_mobile") or contact.get("phone_other") or "",
         "ShowDate": (f"{WD[sd.weekday()]}, {MO[sd.month-1]} {_ord(sd.day)}, {sd.year}" if sd else ""),
+        "ShowDateNoYear": (f"{WD[sd.weekday()]}, {MO[sd.month-1]} {_ord(sd.day)}" if sd else ""),
         "ShowDateShort": (f"{MO[sd.month-1][:3]} {sd.day}, {sd.year}" if sd else ""),
         "ShowDay": (WD[sd.weekday()] if sd else ""), "ShowTime": deal.get("show_time") or "",
         "Venue": deal.get("venue_address") or "", "Occasion": deal.get("occasion") or "",
