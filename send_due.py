@@ -517,6 +517,9 @@ def render_html(raw, V, signature):
     raw = _conditional_blocks(raw, V)          # {{#trivia}}...{{/trivia}} -> keep only if trivia is required
     raw = _drop_empty_optional_lines(raw, V)   # blank EventDetails etc. -> drop the whole line
     s = html.escape(raw or "")
+    # Templates may contain a few literal simple tags (<u>, <br>, <p> — attribute-less); let those
+    # through the escape so "**<u>Payment terms</u>**" renders underlined, not as visible &lt;u&gt;.
+    s = re.sub(r"&lt;(/?(?:u|br|p))&gt;", r"<\1>", s)
     s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
     s = re.sub(r"__(.+?)__", r"<u>\1</u>", s)
     # markdown links: target may be a literal https URL OR a {{Field}} that resolves to a URL
