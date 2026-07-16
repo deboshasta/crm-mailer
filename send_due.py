@@ -465,12 +465,16 @@ def merge_values(deal, contact):
     V["_cond_photos_both"]         = (_goh > 0 and _guest > 0)
     V["_cond_photos_guests_only"]  = (_goh <= 0 and _guest > 0)
     V["_cond_deposit_unpaid"]      = bool(deal.get("deposit_amount")) and deal.get("deposit_status") != "paid"
-    V["_cond_deposit_paid"]        = (deal.get("deposit_status") == "paid")
     _dep_amt = float(deal.get("deposit_amount") or 0)
     _app_fee = float(deal.get("amount") or 0)
     _dep_status = deal.get("deposit_status") or ""
+    # paid_in_full: deposit covered the whole fee and is paid -> deposit/balance lines are replaced
+    # by a single "Paid in full, thank you!" line ({{#paid_in_full}} in the templates).
+    _paid_full = _dep_status == "paid" and _app_fee > 0 and _dep_amt >= _app_fee
+    V["_cond_paid_in_full"]        = _paid_full
+    V["_cond_deposit_paid"]        = _dep_status == "paid" and not _paid_full
     V["_cond_balance_due_now"]     = _dep_amt > 0 and _app_fee > 0 and _dep_amt >= _app_fee and _dep_status not in ("paid", "not_required")
-    V["_cond_balance_due_arrival"] = not V["_cond_balance_due_now"]
+    V["_cond_balance_due_arrival"] = not V["_cond_balance_due_now"] and not _paid_full
     return V
 
 def fill_subject(s, V):
@@ -521,6 +525,7 @@ def render_html(raw, V, signature):
         return f'<a href="{html.escape(url)}" style="color:#1155cc;text-decoration:underline">{text}</a>' if url else text
     s = re.sub(r"\[([^\]]+)\]\((\{\{(\w+)\}\}|https?://[^)]+)\)", _link, s)
     s = re.sub(r"\{\{(\w+)\}\}", lambda m: html.escape(V[m.group(1)]) if V.get(m.group(1)) else m.group(0), s)
+    s = re.sub(r"\$\$+", "$", s)   # never render $$ (template's literal $ + a $ in a merge value)
     s = _lists_and_breaks(s)
     if signature:
         s += "<br><br>" + signature   # signature is trusted raw HTML (image + links), do NOT escape
