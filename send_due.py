@@ -728,11 +728,12 @@ def main():
                 # PAUSE: a required merge field is blank -> do NOT send. Flag it so blocked_digest.py
                 # nags Simon daily and the re-check pass below auto-sends it once the field is filled.
                 was_blocked = bool(e.get("blocked"))
-                st[key] = {**e, "blocked": {"since": (e.get("blocked") or {}).get("since", TODAY.isoformat()), "fields": blanks}}
+                _blocked_entry = {**e, "blocked": {"since": (e.get("blocked") or {}).get("since", TODAY.isoformat()), "fields": blanks}}
+                st[key] = _blocked_entry
                 blocked_today.append((d, key, contact["email"], blanks))
                 if not was_blocked:   # first time this email is paused -> immediate alert to Simon (below)
                     new_blocks.append((contact.get("full_name") or d.get("deal_name") or "deal", key, blanks, d["id"]))
-                if SEND:
+                if SEND and _blocked_entry != e:   # unchanged block -> skip the pointless rewrite
                     cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
                 continue
             if e.get("blocked"):                          # was paused, now complete -> clear the flag before sending
@@ -776,7 +777,10 @@ def main():
                     held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key,
                                      contact.get("email") or "(no email)", subj, hbody, token, d["id"],
                                      *([_note] if _note else [])))
-                if SEND:
+                # Write ONLY when the entry actually changed. Rewriting an identical entry every run
+                # was pure churn: pointless UPDATE egress + a realtime event making every open CRM
+                # tab re-sync, every sweep, for every pending email.
+                if SEND and new_entry != e:
                     cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
                 continue
             due.append((d,key,contact["email"],subj,body,st))
