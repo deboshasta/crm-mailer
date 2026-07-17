@@ -597,7 +597,29 @@ def main():
             "performer_id","commission_amount","proposal_sent_at","photos_received_at","photos_notified_at",
             "deal_name","cue_state","stage_changed_at","created_at","primary_contact_id","gcal_url",
             "deposit_status","deposit_paid_at","require_trivia","send_stage_intro","photo_goh_limit","photo_guest_limit"]
-    cur.execute("select "+",".join(cols_d)+" from deals")
+    # EGRESS: fetch only deals this run can act on (was: all 512 rows incl. every cue_state, ~1MB/run).
+    # Kept sets (mirror every pass below — update BOTH when adding a pass):
+    #   * CUE stages (incl. gcal/w9/gig check-ins/magic-castle-cw subsets of these)
+    #   * closed_lost within a 60-day show window (closed_lost_daybefore/_after flags)
+    #   * un-notified trivia/photo submissions (any stage)
+    #   * paid deposits whose magic_castle invite hasn't been handled (any stage)
+    #   * any live cue entry with send_now / blocked / pending_approval (any stage - the
+    #     send-now sweep, blocked re-check, approval refresh and _depreceipt_ PDF pregen)
+    _sweep_where = """
+        stage in ('closed_won','booked','proposal_sent','schedule_call','refer','refer_won')
+        or (stage = 'closed_lost' and show_date is not null and show_date >= current_date - 60)
+        or (trivia_received_at is not null and (trivia_notified_at is null or trivia_notified_at < trivia_received_at))
+        or (photos_received_at is not null and (photos_notified_at is null or photos_notified_at < photos_received_at))
+        or (deposit_status = 'paid'
+            and (cue_state->'magic_castle'->>'sent') is null
+            and coalesce(cue_state->'magic_castle'->>'cancelled','false') = 'false')
+        or exists (select 1 from jsonb_each(coalesce(cue_state,'{}'::jsonb)) _e(k,v)
+                   where jsonb_typeof(_e.v) = 'object'
+                     and coalesce(_e.v->>'sent','') = ''
+                     and coalesce(_e.v->>'cancelled','') in ('','false')
+                     and ((_e.v->>'send_now') = 'true' or _e.v ? 'blocked' or (_e.v->>'pending_approval') = 'true'))
+    """
+    cur.execute("select "+",".join(cols_d)+" from deals where "+_sweep_where)
     deals=[dict(zip(cols_d,r)) for r in cur.fetchall()]
     cur.execute("select id,first_name,last_name,full_name,email,phone_mobile,phone_other from contacts")
     CB={r[0]:dict(zip(["id","first_name","last_name","full_name","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
