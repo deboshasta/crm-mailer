@@ -535,6 +535,22 @@ def render_html(raw, V, signature):
         s += "<br><br>" + signature   # signature is trusted raw HTML (image + links), do NOT escape
     return s
 
+def _archive_sent(cur, deal_id, key, to, subj, body, sent_at):
+    """Copy a just-sent email into sent_emails, then the cue entry drops its body/pdf_b64.
+    Keeping full HTML bodies in cue_state forever made every deals fetch pay for every email
+    ever sent. Archive failure is non-fatal (the send already happened)."""
+    try:
+        cur.execute("insert into sent_emails(deal_id,cue_key,to_email,subject,body,sent_at) values (%s,%s,%s,%s,%s,%s)",
+                    (deal_id, key, to, subj, body, sent_at))
+    except Exception as _ae:
+        print(f"    (sent_emails archive failed for {key}: {_ae})")
+
+def _strip_heavy(ne):
+    """Remove the bulky fields from a cue entry that just went out (body lives in sent_emails now)."""
+    for _k in ("body", "pdf_b64"):
+        ne.pop(_k, None)
+    return ne
+
 def _claim_dispatch(cur, deal_id, key):
     """Bulletproof idempotency shared with the instant send-now endpoint. Returns True if THIS run is the
     first to claim (deal_id, key) - send it - or False if it was already dispatched (skip). Immune to
@@ -821,7 +837,8 @@ def main():
                 mailer.send_email(to, subj, body)
             else:
                 print("     (already dispatched - skipping)")
-            ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("blocked",None); st[key]=ne
+            ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("blocked",None)
+            _archive_sent(cur, d["id"], key, to, subj, body, ne["sent_at"]); st[key]=_strip_heavy(ne)
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
     if SEND and _cad_ok and due: print("marked sent + saved.")
     if blocked_today:
@@ -887,7 +904,7 @@ def main():
             else:
                 print("     (already dispatched by the instant channel - skipping)")
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("send_now",None); ne.pop("claimed",None)
-            st[key]=ne
+            _archive_sent(cur, d["id"], key, to, subj, body, ne["sent_at"]); st[key]=_strip_heavy(ne)
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
     if SEND and now_due: print("send-now emails sent + flags cleared.")
 
@@ -930,7 +947,7 @@ def main():
             else:
                 print("     (already dispatched - skipping)")
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("blocked",None); ne.pop("send_now",None)
-            st[key]=ne
+            _archive_sent(cur, d["id"], key, to, subj, body, ne["sent_at"]); st[key]=_strip_heavy(ne)
             cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
     if SEND and unblock: print("unblocked emails sent.")
 
