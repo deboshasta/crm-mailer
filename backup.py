@@ -39,6 +39,22 @@ REPO       = _cfg("GITHUB_REPOSITORY")
 KEEP_DAYS  = int(_cfg("BACKUP_KEEP_DAYS") or "30")
 RCLONE_REMOTE = _cfg("RCLONE_REMOTE")   # e.g. "gdrive:CRM-Backups" (optional; set once Drive is configured)
 
+# Tables whose ROWS are skipped by pg_dump. Note --exclude-table-DATA, not --exclude-table: the
+# table definition is still dumped, so a restore recreates it (empty) and the app keeps working.
+#
+# email_events is a pure append-only log of eblast opens/clicks/bounces. It was ~5.3 MB of an
+# ~8.7 MB dump (~61%) - it looks like only 1.1 MB on disk because Postgres compresses it inline,
+# but pg_dump reads it uncompressed. Simon confirmed (2026-07-18) he does not need eblast history.
+# Nothing operational is lost: unsubscribes/bounces live in public.suppressions AND
+# contacts.unsubscribed_at (eblast-unsub.js:24-28, eblast-bounce.js:61-63), headline open/click
+# counts live in campaigns.stats (eblast_send.py:361), and the email text is campaigns.body_html.
+#
+# !! NEVER add `suppressions` or `contacts` here - suppressions is the unsubscribe list and losing
+#    it on a restore would re-mail people who opted out (CAN-SPAM + sender reputation).
+# !! `campaign_recipients` deliberately stays IN the dump: it is operational, not historical, and
+#    restoring without it mid-campaign risks double-sending.
+DUMP_SKIP_DATA = ["public.email_events"]
+
 STAMP = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%MZ")
 DUMP  = "crm-backup-%s.dump" % STAMP
 ENC   = DUMP + ".gpg"
@@ -57,7 +73,9 @@ def do_backup():
     # 1) dump (custom format, no owner/privs so it restores cleanly into any DB)
     env = dict(os.environ, PGPASSWORD=PW)
     run([_pg("pg_dump"), "-h", HOST, "-p", PORT, "-U", USER, "-d", "postgres",
-         "--no-owner", "--no-privileges", "-Fc", "-f", DUMP], env=env)
+         "--no-owner", "--no-privileges", "-Fc"]
+        + ["--exclude-table-data=" + t for t in DUMP_SKIP_DATA]
+        + ["-f", DUMP], env=env)
     size = os.path.getsize(DUMP)
     if size < 10000:
         raise RuntimeError("dump suspiciously small (%d bytes) - aborting" % size)
