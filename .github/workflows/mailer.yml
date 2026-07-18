@@ -16,8 +16,6 @@ name: CRM mailer
 
 on:
   schedule:
-    # TEMP (remove after verifying the egress-cut deploy): force a run every minute
-    - cron: '* * * * *'
     # Core working hours  ~9:00am-5:40pm ET  ->  every 20 min
     - cron: '*/20 13-21 * * *'
     # Evening  ~6:00pm-9:30pm ET  ->  every 30 min (crosses UTC midnight)
