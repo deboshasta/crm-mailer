@@ -52,8 +52,11 @@ jobs:
         run: pip install -r requirements.txt
       - name: Send due + send-now + notifications
         run: python send_due.py --send
-      - name: Queue due SMS drafts
-        run: python sms_due.py
+      # SMS draft enqueuer DISABLED 2026-07-18: it queues drafts into sms_outbox for a phone
+      # consumer that isn't built yet (0 drafts ever sent). Re-enable this step once the Tasker
+      # side (list_pending_sms / mark_sms) is live. Code + DB scaffolding are left intact.
+      # - name: Queue due SMS drafts
+      #   run: python sms_due.py
       # Self-nags moved to nags.yml (2x/day) — they are once-a-day reminders and were
       # re-fetching all deals on every 20-min sweep.
       - name: Alert Simon on failure
