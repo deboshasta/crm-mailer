@@ -8,10 +8,12 @@ name: CRM heartbeat
 
 on:
   schedule:
-    - cron: '0 */6 * * *'      # every 6 hours. Thinned from */3 on 2026-07-18: the pg_cron backstop
-                               # (db/heartbeat_external.sql, 'crm-external-heartbeat') already polls the
-                               # same stamps every 30 min from INSIDE the database at zero egress, so a
-                               # second external checker running 8x/day was redundant precision.
+    - cron: '0 */3 * * *'      # every 3 hours (~200 bytes/run - egress here is irrelevant).
+                               # Kept at */3 rather than */6 because this is the ONLY checker watching the
+                               # "dispatch" monitor (MONITORS in heartbeat.py). The pg_cron backstop
+                               # (db/heartbeat_external.sql) only checks last_mailer_run / last_backup_run,
+                               # so it cannot see a cron-job.org outage. Detection latency for that is
+                               # 5h (staleness) + this interval, so */3 keeps worst case ~8h instead of ~11h.
   workflow_dispatch:
 
 concurrency:

@@ -4,7 +4,7 @@ aren't cancelled or already sent, and mark them sent. FLAG-mode emails are never
 auto-sent (they are Focus reminders). Dry-run by default; pass --send to actually send.
 Safe-mode still routes every send to Simon until mail_safe_mode is turned off.
 """
-import sys, json, html, re, datetime, urllib.parse, secrets, base64
+import sys, os, json, html, re, datetime, urllib.parse, secrets, base64
 from db import connect
 import mailer
 import tz
@@ -1241,6 +1241,15 @@ def main():
     if SEND:
         try:
             heartbeat.stamp(cur, "mailer")
+            # DISPATCH MONITOR (2026-07-18): stamp a SEPARATE key, but only when cron-job.org
+            # triggered this run. cron-job.org is the authoritative scheduler (~30 dispatches/day);
+            # mailer.yml's own cron is just a 5x/day backstop. Without this second stamp, cron-job.org
+            # dying would silently degrade the mailer from 30 runs/day to 5 while the "mailer" stamp
+            # stayed fresh - because the backstop keeps stamping it. GITHUB_EVENT_NAME is a default
+            # Actions variable; locally it is unset, so this no-ops outside CI.
+            if os.environ.get("GITHUB_EVENT_NAME") == "repository_dispatch":
+                heartbeat.stamp(cur, "dispatch")
+            heartbeat.check(cur, "dispatch")
             heartbeat.check(cur, "backup")
         except Exception as _hx:
             print("heartbeat (mailer) failed:", _hx)

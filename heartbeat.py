@@ -32,8 +32,14 @@ import os, sys, datetime
 
 # subsystem -> (max age in hours before it counts as "stopped", human label)
 MONITORS = {
-    "mailer": (6,  "email sweep (send_due.py)"),   # runs every ~20 min; biggest normal gap is ~2h overnight
+    "mailer": (6,  "email sweep (send_due.py)"),   # any trigger (dispatch OR backstop cron) refreshes this
     "backup": (30, "nightly database backup"),      # runs once a day; 30h leaves ~6h of slack
+    # Stamped ONLY by cron-job.org-triggered runs (see send_due.py). cron-job.org is the authoritative
+    # scheduler at */30 across 9am-9pm ET plus 1am/5am keep-alives, so the largest legitimate gap
+    # between DISPATCHED runs is 3.5h (9:30pm -> 1am). 5h gives margin without false alarms.
+    # Point: "mailer" alone cannot detect a cron-job.org outage, because mailer.yml's 5x/day backstop
+    # keeps that stamp fresh - the sweep silently drops 30/day -> 5/day and nothing complains.
+    "dispatch": (5, "cron-job.org dispatch (external scheduler)"),
 }
 _REALERT_HOURS = 20                                 # re-nag at most ~once a day while a subsystem stays down
 
@@ -73,16 +79,31 @@ def _actions_url():
     repo = os.environ.get("GITHUB_REPOSITORY") or "deboshasta/crm-mailer"
     return "https://github.com/%s/actions" % repo
 
+_DEFAULT_REMEDY = ('<p>The automation may have quietly stopped - GitHub can disable scheduled workflows after '
+                   '60 days of repo inactivity, or a cron/quota hiccup can skip runs. Nothing else would alert '
+                   'you, because nothing ran.</p>'
+                   '<p><a href="%s">Open the Actions tab</a> and check the <b>%s</b> workflow - re-enable it if '
+                   'it was disabled, or run it by hand to confirm.</p>')
+
+# Per-monitor "what to do about it". The dispatch monitor needs different advice from the rest:
+# nothing is broken on GitHub's side, and email has NOT stopped - it has slowed to the backstop.
+_REMEDY = {
+    "dispatch": ('<p><b>Email is DELAYED, not stopped.</b> mailer.yml\'s own cron is still running the '
+                 'sweep about 5x/day as a backstop, so nothing is lost - but the normal ~30x/day cadence '
+                 'has stopped, which means a due email can now sit for up to 5 hours.</p>'
+                 '<p>Check <a href="https://console.cron-job.org/jobs">cron-job.org</a>: the '
+                 '<b>CRM Mailer Sweep</b> job may be disabled, may be failing against the GitHub API '
+                 '(expired token?), or the service itself may be down. The GitHub Actions tab will look '
+                 'perfectly healthy either way - the runs simply are not being triggered.</p>'),
+}
+
 def _alert_html(label, name, last_dt, age_h):
     when = last_dt.strftime("%b %d, %Y %H:%M UTC") if last_dt else "never"
+    remedy = _REMEDY.get(name) or (_DEFAULT_REMEDY % (_actions_url(), name))
     return ('<div style="font-family:sans-serif;font-size:15px;color:#111">'
             '<p>&#128721; <b>%s may have STOPPED.</b></p>'
             '<p>No successful run has been recorded in <b>%.0f hours</b> (last: %s).</p>'
-            '<p>The automation may have quietly stopped - GitHub can disable scheduled workflows after '
-            '60 days of repo inactivity, or a cron/quota hiccup can skip runs. Nothing else would alert '
-            'you, because nothing ran.</p>'
-            '<p><a href="%s">Open the Actions tab</a> and check the <b>%s</b> workflow - re-enable it if '
-            'it was disabled, or run it by hand to confirm.</p></div>' % (label, age_h, when, _actions_url(), name))
+            '%s</div>' % (label, age_h, when, remedy))
 
 def _recovered_html(label, last_dt):
     when = last_dt.strftime("%b %d, %Y %H:%M UTC") if last_dt else "just now"
