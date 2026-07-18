@@ -646,8 +646,18 @@ def main():
     #   * paid deposits whose magic_castle invite hasn't been handled (any stage)
     #   * any live cue entry with send_now / blocked / pending_approval (any stage - the
     #     send-now sweep, blocked re-check, approval refresh and _depreceipt_ PDF pregen)
+    # GROWTH BOUND (2026-07-18): closed_won / refer_won are TERMINAL - they accumulate forever, so an
+    # unbounded "stage in (...)" made every sweep re-read every gig ever played. Since the sweep runs
+    # ~35x/day, that is the one term in this system that grows without limit as Simon books more work.
+    # The bound is 300 days because the LAST show-anchored ladder step is ("rebook","show",240) - a
+    # rebook nudge 240 days after the show. 300 leaves ~2 months of slack past it. Deals with no
+    # show_date are always kept (they can't be date-judged), as are future dates.
+    # !! If you ever add a CUE entry anchored to "show" with an offset above 240, RAISE THIS NUMBER
+    #    or that email will silently never fire for older deals.
     _sweep_where = """
-        stage in ('closed_won','booked','proposal_sent','schedule_call','refer','refer_won')
+        stage in ('booked','proposal_sent','schedule_call','refer')
+        or (stage in ('closed_won','refer_won')
+            and (show_date is null or show_date >= current_date - 300))
         or (stage = 'closed_lost' and show_date is not null and show_date >= current_date - 60)
         or (trivia_received_at is not null and (trivia_notified_at is null or trivia_notified_at < trivia_received_at))
         or (photos_received_at is not null and (photos_notified_at is null or photos_notified_at < photos_received_at))

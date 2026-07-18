@@ -113,6 +113,18 @@ def make_encrypted_csv():
     except Exception as e:
         print("  csv: could not list public tables:", str(e)[:150]); return None
     tables = [t.strip() for t in out.splitlines() if t.strip()]
+    # EGRESS (2026-07-18): skip the append-only LOG tables. This CSV export exists so Simon can read
+    # a snapshot in a spreadsheet without pg_restore - nobody opens a pixel-tracking log that way, and
+    # these are the largest tables in the database. The full .dump still contains them, so nothing is
+    # lost for recovery; this only trims the human-readable extra. email_events alone was ~5 MB of the
+    # ~8.7 MB exported here, and it grows forever (there is no retention).
+    # SKIP-LIST not allow-list on purpose: a NEW table is included by default, so adding a table can
+    # never silently drop it from the snapshot.
+    CSV_SKIP = {"email_events", "campaign_recipients", "sent_emails", "email_dispatch", "error_log"}
+    skipped = [t for t in tables if t in CSV_SKIP]
+    tables = [t for t in tables if t not in CSV_SKIP]
+    if skipped:
+        print("  csv: skipping log tables (present in the .dump): %s" % ", ".join(skipped))
     got = []
     for t in tables:
         fn = "%s.csv" % t
