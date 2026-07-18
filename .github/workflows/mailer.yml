@@ -3,9 +3,9 @@ name: CRM mailer
 # ---------------------------------------------------------------------------
 # Runs the CRM email sweep in the cloud so Simon's PC no longer has to be on.
 # Each run sends: due-today client emails, any "Send now" flagged emails,
-# self gig check-ins, trivia/photo received notices, and the self-nags
-# (inquiry-leads, likely-no, proposal-not-sent). Every script is idempotent
-# and date/gap guarded, so running often is safe.
+# self gig check-ins, trivia/photo received notices, and queues due SMS drafts.
+# (The self-nags moved to nags.yml — they are once-a-day and don't need the
+# 20-min cadence.) Every script is idempotent and date/gap guarded.
 #
 # Cadence is tiered to match Simon's working hours. Times below are UTC
 # (GitHub cron only understands UTC). Simon is US Eastern:
@@ -21,9 +21,9 @@ on:
     # Evening  ~6:00pm-9:30pm ET  ->  every 30 min (crosses UTC midnight)
     - cron: '0,30 22-23 * * *'
     - cron: '0,30 0-1 * * *'
-    # Overnight backstop + morning nag coverage  ~11pm-8am ET
-    # (11:00 UTC = 7am ET feeds the inquiry nag; 12:00 UTC = 8am ET feeds the likely-no nag)
-    - cron: '0 3,5,7,9,11,12 * * *'
+    # Overnight backstop  ~12am / 4am / 8am ET  (heartbeat needs a run every <6h; nothing can
+    # send overnight anyway). Thinned from 6 runs; the self-nags moved to nags.yml (2x/day).
+    - cron: '0 4,8,12 * * *'
   workflow_dispatch:        # lets you run it by hand from the Actions tab
   repository_dispatch:      # lets the app's "Send now" button kick a run instantly
     types: [send-now]
@@ -54,12 +54,8 @@ jobs:
         run: python send_due.py --send
       - name: Queue due SMS drafts
         run: python sms_due.py
-      - name: Inquiry leads self-nag
-        run: python inquiry_leads.py --send
-      - name: Likely-no self-nag
-        run: python likely_no_nag.py --send
-      - name: Proposal-not-sent self-nag
-        run: python proposal_notsent_nag.py --send
+      # Self-nags moved to nags.yml (2x/day) — they are once-a-day reminders and were
+      # re-fetching all deals on every 20-min sweep.
       - name: Alert Simon on failure
         if: failure()
         env:

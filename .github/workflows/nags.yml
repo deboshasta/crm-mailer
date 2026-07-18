@@ -1,0 +1,52 @@
+name: CRM self-nags
+
+# ---------------------------------------------------------------------------
+# The three self-nags (inquiry-leads, likely-no, proposal-not-sent) are
+# once-a-day reminders TO Simon. They used to run on every 20-min mailer
+# sweep (~41x/day), re-fetching all deals each time just to no-op — pure
+# egress waste, since each script self-gates to at most once/day per deal.
+# Here they run 2x/day: a morning pass (after all three gate hours: inquiry
+# >=7am, likely-no >=8am, proposal 8am-8pm ET) and an afternoon retry.
+#   12:00 UTC = 8am ET  (morning — satisfies every gate)
+#   18:00 UTC = 2pm ET  (retry; each script no-ops if already sent today)
+# Times are UTC; EST (winter) lands ~1h earlier local, still inside the gates.
+# ---------------------------------------------------------------------------
+
+on:
+  schedule:
+    - cron: '0 12,18 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: crm-nags
+  cancel-in-progress: false
+
+jobs:
+  nag:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      DB_PASSWORD:  ${{ secrets.DB_PASSWORD }}
+      DB_HOST:      ${{ vars.DB_HOST }}
+      DB_USER:      ${{ vars.DB_USER }}
+      DB_PORT:      ${{ vars.DB_PORT }}
+      JOIN_PUSH_BASE: ${{ secrets.JOIN_PUSH_BASE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Inquiry leads self-nag
+        run: python inquiry_leads.py --send
+      - name: Likely-no self-nag
+        run: python likely_no_nag.py --send
+      - name: Proposal-not-sent self-nag
+        run: python proposal_notsent_nag.py --send
+      - name: Alert Simon on failure
+        if: failure()
+        env:
+          FAIL_LABEL: "self-nags"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python notify_fail.py

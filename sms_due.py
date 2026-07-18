@@ -126,10 +126,19 @@ def main():
 
     cols = ["id", "stage", "created_at", "proposal_sent_at", "show_date",
             "deposit_status", "primary_contact_id", "stage_changed_at", "closed_at", "deal_name"]
-    cur.execute("select " + ",".join(cols) + " from deals")
+    # EGRESS: fetch only deals an SMS trigger can fire on (was: all 512 deals + all 2,700 contacts every run).
+    # Stage-based triggers need inquiry / booked / closed_won; the proposal_sent trigger fires on ANY stage
+    # when proposal_sent_at >= floor, so include those too. Matches due_triggers() exactly.
+    _sms_where = ("stage in ('inquiry','schedule_call','qualifying','proposal_prep','proposal_sent','booked','closed_won') "
+                  "or (proposal_sent_at is not null and proposal_sent_at >= %s)")
+    cur.execute("select " + ",".join(cols) + " from deals where " + _sms_where, (floor,))
     deals = [dict(zip(cols, row)) for row in cur.fetchall()]
-    cur.execute("select id, first_name, full_name, phone_mobile from contacts")
-    CB = {r[0]: {"first_name": r[1], "full_name": r[2], "phone_mobile": r[3]} for r in cur.fetchall()}
+    _cids = list({str(d.get("primary_contact_id")) for d in deals if d.get("primary_contact_id")})
+    if _cids:
+        cur.execute("select id, first_name, full_name, phone_mobile from contacts where id::text = any(%s)", (_cids,))
+        CB = {r[0]: {"first_name": r[1], "full_name": r[2], "phone_mobile": r[3]} for r in cur.fetchall()}
+    else:
+        CB = {}
 
     queued, skipped_no_mobile, preview = 0, 0, []
     for d in deals:

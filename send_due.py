@@ -637,8 +637,14 @@ def main():
     """
     cur.execute("select "+",".join(cols_d)+" from deals where "+_sweep_where)
     deals=[dict(zip(cols_d,r)) for r in cur.fetchall()]
-    cur.execute("select id,first_name,last_name,full_name,email,phone_mobile,phone_other from contacts")
-    CB={r[0]:dict(zip(["id","first_name","last_name","full_name","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
+    # EGRESS: fetch only the contacts on the actionable deals (was: all ~2,700 contacts every run).
+    # Every CB lookup below is CB.get(deal.primary_contact_id) for a deal in `deals`, so this is complete.
+    _cids=list({str(d.get("primary_contact_id")) for d in deals if d.get("primary_contact_id")})
+    if _cids:
+        cur.execute("select id,first_name,last_name,full_name,email,phone_mobile,phone_other from contacts where id::text = any(%s)", (_cids,))
+        CB={r[0]:dict(zip(["id","first_name","last_name","full_name","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
+    else:
+        CB={}
     global PERF
     cur.execute("select id, first_name, full_name from performers")
     PERF={r[0]:{"first_name":r[1],"full_name":r[2]} for r in cur.fetchall()}
