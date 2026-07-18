@@ -7,9 +7,16 @@ name: CRM eblast sender
 
 on:
   schedule:
-    # Every 5 min, 9am-10pm ET (UTC-4 summer / UTC-5 winter)
-    - cron: '*/5 13-23 * * *'
-    - cron: '*/5 0-2 * * *'
+    # Hourly, 9am-10pm ET (UTC-4 summer / UTC-5 winter). Thinned from */5 on 2026-07-18 (168 -> 14
+    # runs/day): at */5 this polled every 5 minutes for campaigns Simon schedules a few times a
+    # MONTH, and every idle tick still paid load_cfg() (settings + all of private.config + the
+    # signature template) before discovering there was nothing to send. eblast_send.py now probes
+    # for a due campaign BEFORE loading config, and eblast-trigger.js fires a repository_dispatch
+    # the instant a campaign is scheduled — so this cron only picks up FOLLOW-UP batches after
+    # throttle_per_hour caps a sweep, which is an hourly-scale concern, not a 5-minute one.
+    # BACKSTOP ONLY - 3 runs/day. cron-job.org ("Eblast Trigger", hourly) is the primary scheduler
+    # and fires this workflow through repository_dispatch; these exist only if that service is down.
+    - cron: '0 14,18,22 * * *'
   workflow_dispatch:
   repository_dispatch:
     types: [eblast-send]

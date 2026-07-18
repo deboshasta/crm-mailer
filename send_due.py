@@ -551,6 +551,31 @@ def _strip_heavy(ne):
         ne.pop(_k, None)
     return ne
 
+def _save_cue(cur, deal_id, st, *keys):
+    """Write ONLY the named cue_state keys, instead of re-serializing the whole document.
+
+    WRITE AMPLIFICATION (2026-07-18): every `update deals set cue_state=<entire doc>` rewrote the
+    full ~3 KB JSONB blob even when one small entry changed. That cost three ways:
+      1. WAL - Postgres logs the whole new row version on every update.
+      2. Realtime - web/app.js subscribes to postgres_changes on deals, so each rewrite fans the
+         entire row out to every open CRM tab. The realtime WAL processor was by far the highest-
+         call-count query in the database.
+      3. TOAST bloat - each rewrite orphans the previous out-of-line value; deals' TOAST had grown
+         to roughly 3x its live size (1,480 kB on disk vs ~452 kB of real data).
+    jsonb_set touches a single key, so the WAL record and the realtime payload shrink to the size
+    of the entry that actually changed. A key that is absent from `st` is deleted server-side.
+    """
+    for k in keys:
+        v = st.get(k)
+        if v is None:
+            cur.execute("update deals set cue_state = coalesce(cue_state, '{}'::jsonb) - %s where id=%s",
+                        (k, deal_id))
+        else:
+            cur.execute("update deals set cue_state = "
+                        "jsonb_set(coalesce(cue_state, '{}'::jsonb), %s::text[], %s::jsonb, true) "
+                        "where id=%s",
+                        ([k], json.dumps(v), deal_id))
+
 def _claim_dispatch(cur, deal_id, key):
     """Bulletproof idempotency shared with the instant send-now endpoint. Returns True if THIS run is the
     first to claim (deal_id, key) - send it - or False if it was already dispatched (skip). Immune to
@@ -710,7 +735,7 @@ def main():
                                                  contact["email"], subjf, hbodyf, tokf, d["id"],
                                                  "Flagged email - you normally send these by hand. Use Preview & Send to review and send it, or Cancel to drop it."))
                                 if SEND:
-                                    cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                                    _save_cue(cur, d["id"], st, key)
                 continue
             t=TPL.get(key)
             if not t: continue
@@ -735,7 +760,7 @@ def main():
                             st[key] = {k: v for k, v in e.items()
                                        if k not in ("pending_approval", "pending_since", "approve_token")}
                             if SEND:
-                                cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                                _save_cue(cur, d["id"], st, key)
                                 print(f"  [hard-exit] {d['id'][:8]} {key}: cleared stale approval fields (date_override={_ov_pre})")
                         continue
                 except (ValueError, TypeError):
@@ -761,7 +786,7 @@ def main():
                     if _needs_clean:
                         st[key] = {k: v for k, v in e.items() if k not in ("pending_approval", "pending_since")}
                         if SEND:
-                            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                            _save_cue(cur, d["id"], st, key)
                             print(f"    -> cleared stale pending_approval for {key} (date_override={_ov})")
                 continue
             V=merge_values(d,contact)
@@ -778,7 +803,7 @@ def main():
                 if not was_blocked:   # first time this email is paused -> immediate alert to Simon (below)
                     new_blocks.append((contact.get("full_name") or d.get("deal_name") or "deal", key, blanks, d["id"]))
                 if SEND and _blocked_entry != e:   # unchanged block -> skip the pointless rewrite
-                    cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                    _save_cue(cur, d["id"], st, key)
                 continue
             if e.get("blocked"):                          # was paused, now complete -> clear the flag before sending
                 e = {k: v for k, v in e.items() if k != "blocked"}; st[key] = e
@@ -796,7 +821,7 @@ def main():
                     if _needs_clean:
                         st[key] = {k: v for k, v in e.items() if k not in ("pending_approval", "pending_since")}
                         if SEND:
-                            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                            _save_cue(cur, d["id"], st, key)
                     continue
                 # HOLD for approval: never auto-send. Store the email WITHOUT the signature - the authorize
                 # email shows a clean preview, and the signature is added inline (CID image) on Approve so it
@@ -825,7 +850,7 @@ def main():
                 # was pure churn: pointless UPDATE egress + a realtime event making every open CRM
                 # tab re-sync, every sweep, for every pending email.
                 if SEND and new_entry != e:
-                    cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+                    _save_cue(cur, d["id"], st, key)
                 continue
             due.append((d,key,contact["email"],subj,body,st))
 
@@ -845,7 +870,7 @@ def main():
                 print("     (already dispatched - skipping)")
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("blocked",None)
             _archive_sent(cur, d["id"], key, to, subj, body, ne["sent_at"]); st[key]=_strip_heavy(ne)
-            cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
+            _save_cue(cur, d["id"], st, key)
     if SEND and _cad_ok and due: print("marked sent + saved.")
     if blocked_today:
         print(f"{TODAY}  -  {len(blocked_today)} auto email(s) PAUSED for missing fields:")
@@ -911,7 +936,7 @@ def main():
                 print("     (already dispatched by the instant channel - skipping)")
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("send_now",None); ne.pop("claimed",None)
             _archive_sent(cur, d["id"], key, to, subj, body, ne["sent_at"]); st[key]=_strip_heavy(ne)
-            cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
+            _save_cue(cur, d["id"], st, key)
     if SEND and now_due: print("send-now emails sent + flags cleared.")
 
     # ---- BLOCKED re-check: emails paused for a missing field. Auto-send any that are now complete
@@ -928,7 +953,7 @@ def main():
             if not isinstance(e, dict) or not e.get("blocked"): continue
             if e.get("sent") or e.get("cancelled"):        # already handled -> drop the stale flag
                 e.pop("blocked",None); st[key]=e
-                if SEND: cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
+                if SEND: _save_cue(cur, d["id"], st, key)
                 continue
             t=TPL.get(key)
             if not t: continue
@@ -939,7 +964,7 @@ def main():
             if blanks:                                     # still missing -> stay paused, refresh field list if it changed
                 if (e.get("blocked") or {}).get("fields") != blanks:
                     e["blocked"]={"since":(e.get("blocked") or {}).get("since",TODAY.isoformat()),"fields":blanks}; st[key]=e
-                    if SEND: cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
+                    if SEND: _save_cue(cur, d["id"], st, key)
                 continue
             subj = e["subject"] if e.get("subject") is not None else fill_subject(t["subject"],V)
             body = e["body"] if e.get("body") is not None else render_html(t["body"],V,signature)
@@ -954,7 +979,7 @@ def main():
                 print("     (already dispatched - skipping)")
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("blocked",None); ne.pop("send_now",None)
             _archive_sent(cur, d["id"], key, to, subj, body, ne["sent_at"]); st[key]=_strip_heavy(ne)
-            cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(st), d["id"]))
+            _save_cue(cur, d["id"], st, key)
     if SEND and unblock: print("unblocked emails sent.")
 
     # ---- GCal!: on Closed Won, email Simon a calendar link every day until he saves the event URL ----
@@ -985,7 +1010,7 @@ def main():
             g = {**(st.get("_gcal") or {}), "token": token, "last": TODAY.isoformat()}
             if first: g["first_sent"] = TODAY.isoformat()
             st["_gcal"] = g
-            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+            _save_cue(cur, d["id"], st, "_gcal")
     if SEND and gcal_due: print("gcal reminders sent.")
 
     # ---- Magic Castle invite: ONE per deal (shared marker cue_state['magic_castle']). Closed-Won version
@@ -1035,7 +1060,7 @@ def main():
             mailer.send_email("simon@thesimonshow.com", f"CRM Approval for {nm}: {subj}",
                               _authorize_email_html([(nm, "magic_castle", contact["email"], subj, hbody, token, d["id"], note)]),
                               owner=True)
-            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+            _save_cue(cur, d["id"], st, "magic_castle")
             mc_held += 1
     if SEND and mc_held: print(f"magic castle: {mc_held} held for approval (authorize email sent).")
 
@@ -1075,7 +1100,7 @@ def main():
             mailer.send_email("simon@thesimonshow.com", f"CRM Approval for {nm}: {subj}",
                               _authorize_email_html([(nm, "w9_email", contact["email"], subj, hbody, token, d["id"], note)]),
                               owner=True)
-            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+            _save_cue(cur, d["id"], st, "w9_email")
             w9_held += 1
     if SEND and w9_held: print(f"w9: {w9_held} held for approval (authorize email sent).")
 
@@ -1107,7 +1132,7 @@ def main():
             cs=cur.fetchone()[0] or {}
             if isinstance(cs,str): cs=json.loads(cs or "{}")
             cs[key]={"sent":TODAY.isoformat(), "sent_at":_now_iso()}
-            cur.execute("update deals set cue_state=%s where id=%s",(json.dumps(cs),d["id"]))
+            _save_cue(cur, d["id"], cs, key)
     if SEND and self_due: print("self check-ins sent + marked.")
 
     # ---- trivia-received notifications: email Simon when a client submits the trivia form ----
@@ -1187,7 +1212,7 @@ def main():
     for d in deals:
         st = d.get("cue_state") or {}
         if isinstance(st, str): st = json.loads(st or "{}")
-        _changed = False
+        _changed = []                      # keys actually rewritten (was a bool)
         for key, e in list(st.items()):
             if not key.startswith("_depreceipt_"): continue
             if not e.get("pending_approval"): continue
@@ -1203,12 +1228,12 @@ def main():
                 import receipt as _rcpt
                 fname, pdf_bytes, _mime = _rcpt.make_receipt(d, contact, paid_in_full=paid_in_full)
                 st[key] = {**e, "pdf_b64": base64.b64encode(pdf_bytes).decode(), "pdf_filename": fname}
-                _changed = True; _pdf_gen += 1
+                _changed.append(key); _pdf_gen += 1
                 print(f"  -> [receipt-pdf] generated {fname} for {key}")
             except Exception as _pdf_ex:
                 print(f"  !! receipt PDF gen failed for {key}: {_pdf_ex}")
         if SEND and _changed:
-            cur.execute("update deals set cue_state=%s where id=%s", (json.dumps(st), d["id"]))
+            _save_cue(cur, d["id"], st, *_changed)
     if _pdf_gen: print(f"{TODAY}  -  {_pdf_gen} receipt PDF(s) pre-generated for pending-approval items.")
 
     # HEARTBEAT (Phase 2): record that the mailer ran, and cross-check the backup stamp so a dead

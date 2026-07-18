@@ -376,6 +376,15 @@ def main():
         print("eblast: DB unreachable"); return
     c.autocommit = True
     cur = c.cursor()
+    # EGRESS (2026-07-18): probe for work BEFORE load_cfg(). load_cfg pulls all of private.config
+    # plus the _signature template's body_html (~4-8 KB) on EVERY tick, and the overwhelming
+    # majority of ticks have no campaign due. A boolean existence probe costs ~10 bytes; the full
+    # config load now only happens on runs that actually send something.
+    cur.execute("""select exists(select 1 from campaigns
+                                  where status in ('scheduled','sending')
+                                    and coalesce(scheduled_at, now()) <= now())""")
+    if not cur.fetchone()[0]:
+        print("eblast: no campaign due"); c.close(); return
     cfg = load_cfg(cur)
     if not dry and not ses_ready(cfg):
         print("eblast: SES not configured (private.config ses_smtp_*), worker idle"); c.close(); return

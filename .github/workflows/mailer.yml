@@ -16,14 +16,22 @@ name: CRM mailer
 
 on:
   schedule:
-    # Core working hours  ~9:00am-5:40pm ET  ->  every 20 min
-    - cron: '*/20 13-21 * * *'
-    # Evening  ~6:00pm-9:30pm ET  ->  every 30 min (crosses UTC midnight)
-    - cron: '0,30 22-23 * * *'
-    - cron: '0,30 0-1 * * *'
-    # Overnight backstop  ~12am / 4am / 8am ET  (heartbeat needs a run every <6h; nothing can
-    # send overnight anyway). Thinned from 6 runs; the self-nags moved to nags.yml (2x/day).
-    - cron: '0 4,8,12 * * *'
+    # BACKSTOP ONLY - 5 runs/day. This is NOT the primary schedule.
+    #
+    # cron-job.org ("CRM Mailer Sweep", every 30 min) is the authoritative scheduler: it POSTs to
+    # this repo's /dispatches endpoint and fires the repository_dispatch trigger below. That setup
+    # exists because GitHub's own scheduled workflows proved unreliable - they get delayed or
+    # skipped under load, which was silently dropping sends.
+    #
+    # So the cron here is only insurance against cron-job.org itself going down. 5 runs/day at
+    # 5-hour spacing keeps email flowing in that case AND stays inside heartbeat.py's 6h staleness
+    # threshold (MONITORS["mailer"]), so a cron-job.org outage degrades quietly instead of both
+    # dropping sends and spamming false "mailer STOPPED" alerts.
+    #
+    # History: this file ran */20 during working hours (38/day) while cron-job.org ALSO dispatched
+    # every 5 and every 10 minutes from two duplicate jobs - ~453 mailer runs/day, ~353 MB/day of
+    # Supabase egress, most of it overnight when _cad_ok blocks sending anyway. Fixed 2026-07-18.
+    - cron: '0 0,5,10,15,20 * * *'
   workflow_dispatch:        # lets you run it by hand from the Actions tab
   repository_dispatch:      # lets the app's "Send now" button kick a run instantly
     types: [send-now]
