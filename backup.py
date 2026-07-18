@@ -212,7 +212,39 @@ def heartbeat_stamp():
     except Exception as e:
         print("heartbeat (backup) failed:", e)
 
+SKIP_IF_NEWER_THAN_H = 20        # a successful backup this recently -> this run is a redundant backstop
+
+def _hours_since_last_backup():
+    """Hours since the last SUCCESSFUL backup (private.config.last_backup_run), or None if unknown.
+    Best-effort: any failure returns None so the backup still runs - never skip on a broken check."""
+    try:
+        from db import connect
+        c = connect(); cur = c.cursor()
+        cur.execute("select value from private.config where key='last_backup_run'")
+        row = cur.fetchone()
+        c.close()
+        if not row or not row[0]:
+            return None
+        dt = datetime.datetime.fromisoformat(row[0])
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return (datetime.datetime.now(datetime.timezone.utc) - dt).total_seconds() / 3600.0
+    except Exception as e:
+        print("backup: couldn't read last_backup_run (%s) - proceeding anyway" % str(e)[:140])
+        return None
+
 if __name__ == "__main__":
+    # DOUBLE-RUN GUARD (2026-07-18): the backup now has TWO schedules - a cron-job.org dispatch at
+    # 3am ET (primary, because GitHub's own cron proved unreliable) and backup.yml's cron at 7am ET
+    # (backstop). Without this gate both would fire daily: two full pg_dump + CSV exports (~16 MB of
+    # egress instead of ~8) and two GitHub Releases. With it, the 7am backstop no-ops unless the 3am
+    # dispatch actually failed to happen. Pass --force to override (manual runs / testing).
+    if "--force" not in sys.argv:
+        _age = _hours_since_last_backup()
+        if _age is not None and _age < SKIP_IF_NEWER_THAN_H:
+            print("backup: last successful backup was %.1fh ago (< %dh) - skipping this backstop run."
+                  % (_age, SKIP_IF_NEWER_THAN_H))
+            sys.exit(0)
     try:
         detail = do_backup()
         notify(True, detail)

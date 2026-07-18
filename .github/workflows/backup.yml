@@ -6,8 +6,15 @@ name: CRM DB backup
 
 on:
   schedule:
-    - cron: '0 7 * * *'      # ~3am ET (EDT) / ~2am ET (EST), nightly
+    # BACKSTOP ONLY - ~7am ET. The PRIMARY trigger is cron-job.org ("CRM Backup Trigger", 3am ET)
+    # firing the repository_dispatch below, because GitHub's own scheduled workflows proved
+    # unreliable and a silently-skipped backup is the most expensive thing in this repo to lose.
+    # backup.py self-gates on private.config.last_backup_run (SKIP_IF_NEWER_THAN_H = 20), so this
+    # run no-ops unless the 3am dispatch genuinely didn't happen. Pass --force to override.
+    - cron: '0 11 * * *'
   workflow_dispatch:
+  repository_dispatch:
+    types: [backup-run]
 
 permissions:
   contents: write            # needed to create/delete Releases (where backups are stored)
