@@ -478,15 +478,17 @@ def merge_values(deal, contact):
     V["_cond_balance_due_arrival"] = not V["_cond_balance_due_now"] and not _paid_full
     return V
 
-# Merge values can already END in terminal punctuation - Simon writes occasions like "fun!" - while
-# templates put a period straight after the field ("...for {{Occasion}}."). That renders "fun!.".
-# Collapse it. "!." and "?." are never legitimate prose, so this is safe to apply to the whole
-# string rather than only at the merge site. Exactly the same shape as the $$ collapse below.
+# Merge values can already END in an exclamation mark - Simon writes occasions like
+# "Intersession of camp!" - while templates put a period straight after the field
+# ("...at {{Occasion}}."). That renders "camp!.". Collapse it.
+# Deliberately "!" ONLY, not "?": an occasion is never phrased as a question, so a "?." would be
+# real prose (a genuine question followed by a new sentence) and must be left alone.
+# Applied to the whole rendered string rather than only at the merge site - "!." is never
+# legitimate. Exactly the same shape as the $$ collapse below.
 # MIRRORED in web/app.js (fillSubject + _cleanMailHtml) and vercel-send/api/run-due.js - all three
 # render templates, so all three need this or the same email differs depending on who sent it.
-_END_PUNCT_RE = re.compile(r"([!?])\.")
 def _fix_end_punct(s):
-    return _END_PUNCT_RE.sub(r"\1", s or "")
+    return (s or "").replace("!.", "!")
 
 def fill_subject(s, V):
     return _fix_end_punct(
@@ -541,7 +543,7 @@ def render_html(raw, V, signature):
     s = re.sub(r"\[([^\]]+)\]\((\{\{(\w+)\}\}|https?://[^)]+)\)", _link, s)
     s = re.sub(r"\{\{(\w+)\}\}", lambda m: html.escape(V[m.group(1)]) if V.get(m.group(1)) else m.group(0), s)
     s = re.sub(r"\$\$+", "$", s)   # never render $$ (template's literal $ + a $ in a merge value)
-    s = _fix_end_punct(s)          # never render "fun!." (merge value ending in ! + template's period)
+    s = _fix_end_punct(s)          # never render "camp!." (merge value ending in ! + template's period)
     s = _lists_and_breaks(s)
     if signature:
         s += "<br><br>" + signature   # signature is trusted raw HTML (image + links), do NOT escape
