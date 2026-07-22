@@ -948,14 +948,16 @@ def main():
             # exempt from safe mode: e.no_safe (owner SMS/notifications) + the new-lead inquiry confirmation
             # (_newlead_client_*) - a transactional auto-reply that must reach the lead, not reroute to Simon.
             no_safe = bool(e.get("no_safe")) or key.startswith("_newlead_client_")
-            now_due.append((d,key,to,subj,body,st,no_safe,contact))
+            # optional cc on a send-now entry (mailer.send_email has always accepted it; the cue
+            # just never passed one through). MIRRORED in vercel-send/api/run-due.js.
+            now_due.append((d,key,to,subj,body,st,no_safe,contact,e.get("cc")))
     print(f"{TODAY}  -  {len(now_due)} send-now email(s)  (mode: {'SEND' if SEND else 'DRY-RUN'})")
-    for (d,key,to,subj,body,st,no_safe,contact) in now_due:
-        print(f"  -> [now] {to}  |  [{key}]  {subj[:70]}{'  [no-safe]' if no_safe else ''}")
+    for (d,key,to,subj,body,st,no_safe,contact,cc) in now_due:
+        print(f"  -> [now] {to}{('  cc:'+str(cc)) if cc else ''}  |  [{key}]  {subj[:70]}{'  [no-safe]' if no_safe else ''}")
         if SEND:
             if _claim_dispatch(cur, d["id"], (st.get(key) or {}).get("dispatch_id") or key):
                 atts = attachments.attachments_for("deposit_receipt", d, contact) if key.startswith("_depreceipt_") else []
-                mailer.send_email(to, subj, body, owner=no_safe, attachments=atts)
+                mailer.send_email(to, subj, body, owner=no_safe, attachments=atts, cc=cc)
             else:
                 print("     (already dispatched by the instant channel - skipping)")
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("send_now",None); ne.pop("claimed",None)
