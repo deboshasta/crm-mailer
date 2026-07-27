@@ -204,15 +204,16 @@ def notify(ok, detail):
     try:
         import mailer
         if ok:
-            subj = "CRM backup OK - %s" % STAMP
-            body = ("<div style=\"font-family:sans-serif;font-size:15px;color:#111\">"
-                    "<p>&#9989; <b>Database backup succeeded.</b></p><p>%s</p>"
-                    "<p style=\"color:#666;font-size:13px\">GitHub release: <b>%s</b> in %s</p></div>" % (detail, TAG, REPO))
-        else:
-            subj = "CRM backup FAILED - %s" % STAMP
-            body = ("<div style=\"font-family:sans-serif;font-size:15px;color:#111\">"
-                    "<p>&#10060; <b>Database backup FAILED.</b> Details below.</p>"
-                    "<pre style=\"white-space:pre-wrap;font-size:12px\">%s</pre></div>" % detail)
+            # SUCCESS -> text Simon rather than email. 7324926071@vtext.com is Verizon's email-to-SMS
+            # gateway, so a short plain message arrives as a text. No HTML (the gateway strips it) and
+            # no detail dump - a green "it worked" is all a success needs; details are in the Release.
+            mailer.send_email("7324926071@vtext.com", "CRM backup OK", "Backup succeeded %s" % STAMP)
+            return
+        # FAILURE -> full email to Simon (unchanged), plus the phone push below.
+        subj = "CRM backup FAILED - %s" % STAMP
+        body = ("<div style=\"font-family:sans-serif;font-size:15px;color:#111\">"
+                "<p>&#10060; <b>Database backup FAILED.</b> Details below.</p>"
+                "<pre style=\"white-space:pre-wrap;font-size:12px\">%s</pre></div>" % detail)
         mailer.send_email("simon@thesimonshow.com", subj, body)
         if not ok:                                           # out-of-band phone push on backup failure (roadmap #5)
             try:
