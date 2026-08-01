@@ -111,7 +111,7 @@ CUE = [
     ("deposit_chase_2","stage",7,"flag",("booked","closed_won")),
     ("balance_reminder","show",-2,"flag",("booked","closed_won")),
     ("thank_you","show",1,"auto",("closed_won",)),
-    ("review_request","show",2,"auto",("closed_won",)),
+    ("review_request","after_thank_you",0,"auto",("closed_won",)),   # NOT show-anchored: follows thank_you's outcome (see anchor_date)
     ("popped_into","show",14,"flag",("closed_won",)),
     ("rebook","show",240,"flag",("closed_won",)),
     ("pf_fu1","proposal_sent",3,"auto",("proposal_sent",)),
@@ -625,6 +625,18 @@ def anchor_date(deal, anchor, stages):
     if anchor=="stage":   return _d(deal.get("stage_changed_at"))
     if anchor=="proposal_sent": return _d(deal.get("proposal_sent_at"))   # follow-ups start when the proposal was sent
     if anchor=="created": return _d(deal.get("created_at"))
+    if anchor=="after_thank_you":
+        # review_request follows the ACTUAL outcome of thank_you, not the show date:
+        #   thank_you SENT      -> due the DAY AFTER it was sent
+        #   thank_you CANCELLED -> due now (returns TODAY; this CUE entry's offset is 0)
+        #   neither yet         -> not due (wait for Simon to send or cancel thank_you)
+        ty = (deal.get("cue_state") or {}).get("thank_you") or {}
+        if ty.get("cancelled"): return TODAY
+        s = ty.get("sent")
+        if s:
+            sd = _d(s)
+            return sd + datetime.timedelta(days=1) if sd else None
+        return None
     return None
 
 def main():
@@ -723,7 +735,7 @@ def main():
             # refer-won check-ins need a performer linked first
             if key in ("refer_won_daybefore","refer_won_after") and not d.get("performer_id"): continue
             # repeat clients: post-show emails become FLAG/manual (don't auto-send the same note yearly)
-            eff = "flag" if (d.get("is_repeat") and anchor=="show" and off>0) else mode
+            eff = "flag" if (d.get("is_repeat") and (anchor=="after_thank_you" or (anchor=="show" and off>0))) else mode
             if eff not in AUTO_MODES:
                 # FLAG emails are never auto-sent. But from 7am ET on their due date we send Simon ONE approval
                 # request (Approve / Edit / Cancel) so flagged emails ALSO route through his inbox. This is
