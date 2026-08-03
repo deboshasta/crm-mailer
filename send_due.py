@@ -243,13 +243,22 @@ def _parse_time(s):
     return (h,mm) if 0<=h<=23 and 0<=mm<=59 else None
 
 def _gcal_day_link(d):
-    """Google Calendar day view for the show date, with the show time in the query so Simon can see it:
-    https://calendar.google.com/calendar/u/0/r/customday/YYYY/MM/DD?<show_time>"""
+    """Google Calendar day view for the show date, with the show time in the query so Simon can see it.
+    No leading zeros - matches the format Simon uses, e.g. .../customday/2026/8/15?3:30PM-5:30PM"""
     sd=_d(d.get("show_date"))
     if not sd: return ""
     stime=re.sub(r"\s+","",(d.get("show_time") or ""))   # drop spaces so it stays readable in the URL (7pm, 5:30PM)
-    base="https://calendar.google.com/calendar/u/0/r/customday/%04d/%02d/%02d" % (sd.year, sd.month, sd.day)
+    base="https://calendar.google.com/calendar/u/0/r/customday/%d/%d/%d" % (sd.year, sd.month, sd.day)
     return base + ("?"+stime if stime else "")
+
+def _double_check_btn(d):
+    """Amber 'DOUBLE CHECK DATE' button -> the Google Calendar day view for the show date, so Simon can
+    eyeball that day for conflicts before adding the event. Sits just BEFORE the add-to-calendar button."""
+    link=_gcal_day_link(d)
+    if not link: return ""
+    return ('<a href="%s" style="display:inline-block;background:#e0a92e;color:#3a2a00;text-decoration:none;'
+            'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 8px 10px 0">&#128269; DOUBLE CHECK DATE</a>'
+            % html.escape(link))
 
 def gcal_link(d, V):
     """The calendar link for a deal: the SAVED event URL once Simon has stored it, else the add-event link."""
@@ -284,6 +293,7 @@ def _gcal_email_html(d, V, token, reminder):
                  'margin:0 0 14px;font-weight:bold;color:#7a5a00">Reminder - add to calendar and update gcal link</div>')
     b.append('<h2 style="margin:0 0 4px">Add to calendar: %s</h2>' % html.escape(str(who)))
     b.append('<p style="color:#5f6368;margin:0 0 14px">%s%s</p>' % (html.escape(str(when)), (" at "+html.escape(stime)) if stime else ""))
+    b.append(_double_check_btn(d))                  # DOUBLE CHECK DATE button - goes before the STEP 1 / calendar button
     if link:
         open_lbl = "Open your event" if d.get("gcal_url") else "STEP 1: Copy info below to GCal"
         b.append('<a href="%s" style="display:inline-block;background:#1155cc;color:#fff;text-decoration:none;'
@@ -348,13 +358,17 @@ def selfcheckin_html(d, V, label):
           ("Format", V["FormatDetails"] or "-"),
           ("Money", f'Fee ${V["AppearanceFee"] or "?"}  -  deposit ${V["DepositAmount"] or "0"}  -  balance ${V["BalanceAmount"] or "?"} ({d.get("balance_status") or "?"})')]
     b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
+    _dcb=_double_check_btn(d)                                     # DOUBLE CHECK DATE button - goes first
     _cal=gcal_link(d,V)
-    if _cal:
-        # deal already has a saved calendar event -> one button straight to that appointment; else "add to calendar"
-        _cal_lbl = "&#128197; Open gig in calendar" if d.get("gcal_url") else "&#128197; Add to calendar"
-        b.append(f'<p style="margin:0 0 14px"><a href="{html.escape(_cal)}" '
-                 f'style="display:inline-block;background:#1155cc;color:#fff;text-decoration:none;'
-                 f'font-weight:bold;padding:10px 20px;border-radius:8px">{_cal_lbl}</a></p>')
+    if _dcb or _cal:
+        _cal_btn=""
+        if _cal:
+            # deal already has a saved calendar event -> one button straight to that appointment; else "add to calendar"
+            _cal_lbl = "&#128197; Open gig in calendar" if d.get("gcal_url") else "&#128197; Add to calendar"
+            _cal_btn=(f'<a href="{html.escape(_cal)}" '
+                      f'style="display:inline-block;background:#1155cc;color:#fff;text-decoration:none;'
+                      f'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 8px 10px 0">{_cal_lbl}</a>')
+        b.append(f'<p style="margin:0 0 14px">{_dcb}{_cal_btn}</p>')
     b.append(f'<h2 style="margin:0 0 10px">Gig {html.escape(label)}: {html.escape(V["ClientFullName"] or "gig")}</h2>')
     b.append('<table style="border-collapse:collapse">')
     for k,val in rows:
