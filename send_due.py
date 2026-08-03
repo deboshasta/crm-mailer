@@ -279,6 +279,21 @@ def gcal_link(d, V):
     params={"action":"TEMPLATE","text":title,"dates":dates,"location":V.get("Venue") or "","details":details}
     return "https://calendar.google.com/calendar/render?"+urllib.parse.urlencode(params)
 
+def _client_info_rows(V):
+    """Client contact block as THREE separate (label, html_value) lines - Name, Email (mailto), Phone
+    (tel) - shown the same way in every self-notification to Simon. Missing email/phone -> em dash."""
+    name  = V.get("ClientFullName") or "-"
+    email = (V.get("ClientEmail") or "").strip()
+    phone = (V.get("ClientPhone") or "").strip()
+    email_html = ('<a href="mailto:%s" style="color:#1155cc;text-decoration:underline">%s</a>'
+                  % (html.escape(email), html.escape(email))) if email else "&mdash;"
+    phone_html = "&mdash;"
+    if phone:
+        num = re.sub(r"[^\d+]", "", re.split(r"(?i)\s*(?:x|ext\.?)\s*", phone, maxsplit=1)[0])
+        phone_html = (('<a href="tel:%s" style="color:#1155cc;text-decoration:underline">%s</a>'
+                       % (html.escape(num), html.escape(phone))) if num else html.escape(phone))
+    return [("Name", html.escape(str(name))), ("Email", email_html), ("Phone", phone_html)]
+
 def _gcal_email_html(d, V, token, reminder):
     """GCal! email to Simon: a calendar link for the show + an 'Update GCal link' button (paste page).
     reminder=True adds the 'add to calendar and update gcal link' banner at the top."""
@@ -313,17 +328,13 @@ def _gcal_email_html(d, V, token, reminder):
         num = re.sub(r"[^\d+]", "", parts[0] if parts else "")
         ext = re.sub(r"[^\d]", "", parts[1]) if len(parts) > 1 else ""
         return ("tel:%s%s" % (num, ("," + ext) if ext else "")) if num else ""
-    phone = V.get("ClientPhone") or ""; email = V.get("ClientEmail") or ""
-    client_html = (html.escape(V.get("ClientFullName") or "-")
-                   + (("   " + (_a(_tel_href(phone), phone) if _tel_href(phone) else html.escape(phone))) if phone else "")   # phone -> tel:
-                   + (("   " + _a("mailto:" + email, email)) if email else ""))                                              # email -> mailto:
     _dep_amt = V.get("DepositAmount") or "0"; _ds = (d.get("deposit_status") or "").lower()
     if _ds == "paid":            _dep = 'deposit $%s <b style="color:#1e874b">&#10003; PAID</b>' % html.escape(_dep_amt)
     elif _ds == "not_required":  _dep = 'deposit <b>not required</b>'
     elif _ds == "pending":       _dep = 'deposit $%s <b style="color:#b8860b">(pending)</b>' % html.escape(_dep_amt)
     else:                        _dep = 'deposit $%s <b style="color:#c0392b">(NOT paid yet)</b>' % html.escape(_dep_amt)
     money_html = 'Fee $%s  -  %s  -  balance $%s' % (html.escape(V.get("AppearanceFee") or "?"), _dep, html.escape(V.get("BalanceAmount") or "?"))
-    rows = [("Client", client_html),                              # Client + Money values are HTML; the rest are plain-escaped below
+    rows = _client_info_rows(V) + [                              # client block (Name/Email/Phone) + Money are HTML; the rest are plain-escaped
             ("When", html.escape((V.get("ShowDate") or "-") + ((" at " + stime) if stime else ""))),
             ("Venue", html.escape(V.get("Venue") or "(not set)")),
             ("Occasion", html.escape(V.get("Occasion") or "-")),
@@ -350,8 +361,7 @@ def _gcal_email_html(d, V, token, reminder):
     return "".join(b)
 
 def selfcheckin_html(d, V, label):
-    rows=[("Client", (V["ClientFullName"] or "-") + (f'   {V["ClientPhone"]}' if V["ClientPhone"] else "")),
-          ("When", (V["ShowDate"] or "-") + (f' at {V["ShowTime"]}' if V["ShowTime"] else "")),
+    rows=[("When", (V["ShowDate"] or "-") + (f' at {V["ShowTime"]}' if V["ShowTime"] else "")),
           ("Venue", V["Venue"] or "(not set)"),
           ("Occasion", V["Occasion"] or "-"),
           ("Event details", V["EventDetails"] or "-"),
@@ -371,6 +381,9 @@ def selfcheckin_html(d, V, label):
         b.append(f'<p style="margin:0 0 14px">{_dcb}{_cal_btn}</p>')
     b.append(f'<h2 style="margin:0 0 10px">Gig {html.escape(label)}: {html.escape(V["ClientFullName"] or "gig")}</h2>')
     b.append('<table style="border-collapse:collapse">')
+    for k,val in _client_info_rows(V):   # client block: Name / Email (mailto) / Phone (tel) - values are ready HTML
+        b.append(f'<tr><td style="padding:3px 14px 3px 0;color:#5f6368;vertical-align:top"><b>{html.escape(k)}</b></td>'
+                 f'<td style="padding:3px 0">{val}</td></tr>')
     for k,val in rows:
         b.append(f'<tr><td style="padding:3px 14px 3px 0;color:#5f6368;vertical-align:top"><b>{html.escape(k)}</b></td>'
                  f'<td style="padding:3px 0">{html.escape(str(val))}</td></tr>')
