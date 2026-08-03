@@ -1159,7 +1159,7 @@ def main():
             e=st.get(key) or {}
             if e.get("sent") or e.get("cancelled"): continue
             who = V["ClientFullName"] or (d.get("deal_name") or "gig")
-            subj=f"[GIG {label}] {who} - {V['ShowDateShort']}"
+            subj=f"GCal! [GIG {label}] {who} - {V['ShowDateShort']}"
             self_due.append((d,key,subj,selfcheckin_html(d,V,label)))
     print(f"{TODAY}  -  {len(self_due)} self gig check-in(s) due")
     for (d,key,subj,body) in self_due:
