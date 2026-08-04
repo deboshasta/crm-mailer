@@ -279,6 +279,13 @@ def gcal_link(d, V):
     params={"action":"TEMPLATE","text":title,"dates":dates,"location":V.get("Venue") or "","details":details}
     return "https://calendar.google.com/calendar/render?"+urllib.parse.urlencode(params)
 
+def _maps_link(addr):
+    """Event address as a Google Maps search link (or '(not set)' when blank)."""
+    a = str(addr or "").strip()
+    if not a: return "(not set)"
+    url = "https://www.google.com/maps?q=" + urllib.parse.quote_plus(a)
+    return '<a href="%s" style="color:#1155cc;text-decoration:underline">%s</a>' % (html.escape(url), html.escape(a))
+
 def _client_info_rows(V):
     """Client contact block as THREE separate (label, html_value) lines - Name, Email (mailto), Phone
     (tel) - shown the same way in every self-notification to Simon. Missing email/phone -> em dash."""
@@ -336,7 +343,7 @@ def _gcal_email_html(d, V, token, reminder):
     money_html = 'Fee $%s  -  %s  -  balance $%s' % (html.escape(V.get("AppearanceFee") or "?"), _dep, html.escape(V.get("BalanceAmount") or "?"))
     rows = _client_info_rows(V) + [                              # client block (Name/Email/Phone) + Money are HTML; the rest are plain-escaped
             ("When", html.escape((V.get("ShowDate") or "-") + ((" at " + stime) if stime else ""))),
-            ("Venue", html.escape(V.get("Venue") or "(not set)")),
+            ("Venue", _maps_link(V.get("Venue"))),   # event address -> Google Maps link
             ("Occasion", html.escape(V.get("Occasion") or "-")),
             ("Event details", html.escape(V.get("EventDetails") or "-")),
             ("Format", html.escape(V.get("FormatDetails") or "-")),
@@ -361,12 +368,12 @@ def _gcal_email_html(d, V, token, reminder):
     return "".join(b)
 
 def selfcheckin_html(d, V, label):
-    rows=[("When", (V["ShowDate"] or "-") + (f' at {V["ShowTime"]}' if V["ShowTime"] else "")),
-          ("Venue", V["Venue"] or "(not set)"),
-          ("Occasion", V["Occasion"] or "-"),
-          ("Event details", V["EventDetails"] or "-"),
-          ("Format", V["FormatDetails"] or "-"),
-          ("Money", f'Fee ${V["AppearanceFee"] or "?"}  -  deposit ${V["DepositAmount"] or "0"}  -  balance ${V["BalanceAmount"] or "?"} ({d.get("balance_status") or "?"})')]
+    rows=[("When", html.escape((V["ShowDate"] or "-") + (f' at {V["ShowTime"]}' if V["ShowTime"] else ""))),
+          ("Venue", _maps_link(V["Venue"])),   # event address -> Google Maps link
+          ("Occasion", html.escape(V["Occasion"] or "-")),
+          ("Event details", html.escape(V["EventDetails"] or "-")),
+          ("Format", html.escape(V["FormatDetails"] or "-")),
+          ("Money", html.escape(f'Fee ${V["AppearanceFee"] or "?"}  -  deposit ${V["DepositAmount"] or "0"}  -  balance ${V["BalanceAmount"] or "?"} ({d.get("balance_status") or "?"})'))]
     b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
     _dcb=_double_check_btn(d)                                     # DOUBLE CHECK DATE button - goes first
     _cal=gcal_link(d,V)
@@ -384,9 +391,9 @@ def selfcheckin_html(d, V, label):
     for k,val in _client_info_rows(V):   # client block: Name / Email (mailto) / Phone (tel) - values are ready HTML
         b.append(f'<tr><td style="padding:3px 14px 3px 0;color:#5f6368;vertical-align:top"><b>{html.escape(k)}</b></td>'
                  f'<td style="padding:3px 0">{val}</td></tr>')
-    for k,val in rows:
+    for k,val in rows:                   # values are pre-escaped HTML (Venue is a maps link)
         b.append(f'<tr><td style="padding:3px 14px 3px 0;color:#5f6368;vertical-align:top"><b>{html.escape(k)}</b></td>'
-                 f'<td style="padding:3px 0">{html.escape(str(val))}</td></tr>')
+                 f'<td style="padding:3px 0">{val}</td></tr>')
     b.append('</table>')
     b.append('<p style="margin-top:14px;color:#5f6368">Prep: confirm arrival time &amp; parking &middot; pack props &middot; '
              'custom poster / trivia ready &middot; route mapped.</p></div>')
