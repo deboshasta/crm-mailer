@@ -1075,7 +1075,7 @@ def main():
         V = merge_values(d, contact)
         who = V.get("ClientFullName") or d.get("deal_name") or "booking"
         when = V.get("ShowDateShort") or str(d.get("show_date"))
-        subj = ("‼️📅 GCal! - %s - %s" % (who, when)) if first else ("Reminder: add to calendar - %s - %s" % (who, when))
+        subj = ("‼️📅 GCal! - %s - %s" % (who, when)) if first else ("‼️📅 Reminder: add to calendar - %s - %s" % (who, when))
         print("  -> [gcal] %s" % subj[:70])
         if SEND:
             mailer.send_email("simon@thesimonshow.com", subj, _gcal_email_html(d, V, token, reminder=not first), owner=True)
