@@ -40,7 +40,7 @@ def main():
             'foundation.)</p></div>') % (len(rows), "".join(items))
 
     if "--send" in sys.argv:
-        r = mailer.send_email("simon@thesimonshow.com", "%d CRM error(s) in the last 24h" % len(rows), body, owner=True)
+        r = mailer.send_email("simon@thesimonshow.com", "%d smCRM error(s) in the last 24h" % len(rows), body, owner=True)
         print("emailed ->", r.get("routed_to"))
     else:
         print("(dry-run; pass --send to email)")

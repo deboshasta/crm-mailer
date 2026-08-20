@@ -959,7 +959,7 @@ def main():
             print(f"  -> [held] {to}  |  [{key}]  {subj[:60]}")
             if SEND:
                 mailer.send_email("simon@thesimonshow.com",
-                                  f"CRM Approval for {nm}: {subj}",
+                                  f"smCRM Approval for {nm}: {subj}",
                                   _authorize_email_html([row]), owner=True)   # one authorize email per held email
 
     # ---- SEND NOW: emails the app flagged for immediate send (cue_state[key].send_now) ----
@@ -1129,7 +1129,7 @@ def main():
                               "pending_since": e.get("pending_since") or TODAY.isoformat()}
         print("  -> [magic:%s HELD] %s  |  %s" % (version, contact["email"], subj[:46]))
         if SEND:
-            mailer.send_email("simon@thesimonshow.com", f"CRM Approval for {nm}: {subj}",
+            mailer.send_email("simon@thesimonshow.com", f"smCRM Approval for {nm}: {subj}",
                               _authorize_email_html([(nm, "magic_castle", contact["email"], subj, hbody, token, d["id"], note)]),
                               owner=True)
             _save_cue(cur, d["id"], st, "magic_castle")
@@ -1169,7 +1169,7 @@ def main():
                           "pending_since": e.get("pending_since") or TODAY.isoformat()}
         print("  -> [w9 HELD] %s  |  %s" % (contact["email"], subj[:46]))
         if SEND:
-            mailer.send_email("simon@thesimonshow.com", f"CRM Approval for {nm}: {subj}",
+            mailer.send_email("simon@thesimonshow.com", f"smCRM Approval for {nm}: {subj}",
                               _authorize_email_html([(nm, "w9_email", contact["email"], subj, hbody, token, d["id"], note)]),
                               owner=True)
             _save_cue(cur, d["id"], st, "w9_email")
@@ -1267,7 +1267,7 @@ def main():
                            % (html.escape(t), html.escape(s), html.escape(e)) for t,s,e in _send_fails)
                  + '</ul></div>')
         try:
-            _orig_send("simon@thesimonshow.com", "[CRM] %d email send(s) FAILED" % len(_send_fails), _body, owner=True)
+            _orig_send("simon@thesimonshow.com", "[smCRM] %d email send(s) FAILED" % len(_send_fails), _body, owner=True)
             print("failure-summary email sent.")
         except Exception as _ex:
             print("failure-summary email ALSO failed:", _ex)

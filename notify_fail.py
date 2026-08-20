@@ -11,7 +11,7 @@ try:
     body = ('<div style="font-family:sans-serif;font-size:15px;color:#111">'
             '<p>&#10060; <b>%s FAILED.</b></p>'
             '<p><a href="%s">Open the failed run</a> to see which step broke.</p></div>' % (label, url))
-    mailer.send_email("simon@thesimonshow.com", "[CRM] %s FAILED" % label, body, owner=True)
+    mailer.send_email("simon@thesimonshow.com", "[smCRM] %s FAILED" % label, body, owner=True)
     print("failure alert sent for:", label)
     try:                                        # out-of-band phone push (roadmap #5); env-only - the DB may be what failed
         import join

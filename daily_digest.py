@@ -79,7 +79,7 @@ def main():
 
     print(f"Digest {TODAY}: shows10={len(shows10)} unpaid={len(unpaid)} followups={len(followups)} stale={len(stale)}")
     if "--send" in sys.argv:
-        r=mailer.send_email("simon@thesimonshow.com", f"[CRM] Daily digest - {TODAY:%b %d}", html_body)
+        r=mailer.send_email("simon@thesimonshow.com", f"[smCRM] Daily digest - {TODAY:%b %d}", html_body)
         print("emailed ->", r["routed_to"])
     return html_body
 

@@ -210,7 +210,7 @@ def notify(ok, detail):
             mailer.send_email("7324926071@vtext.com", "CRM backup OK", "Backup succeeded %s" % STAMP)
             return
         # FAILURE -> full email to Simon (unchanged), plus the phone push below.
-        subj = "CRM backup FAILED - %s" % STAMP
+        subj = "smCRM backup FAILED - %s" % STAMP
         body = ("<div style=\"font-family:sans-serif;font-size:15px;color:#111\">"
                 "<p>&#10060; <b>Database backup FAILED.</b> Details below.</p>"
                 "<pre style=\"white-space:pre-wrap;font-size:12px\">%s</pre></div>" % detail)
