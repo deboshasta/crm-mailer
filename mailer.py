@@ -4,9 +4,25 @@ Reads From / Reply-To / safe-mode from settings, and transport (SMTP host/user/p
 from private.config. Safe-mode routes every send to settings.safe_mode_recipient (you),
 so NO client is ever emailed until mail_safe_mode is turned off.
 """
-import ssl, smtplib, os
+import ssl, smtplib, os, re
 from email.message import EmailMessage
 from db import connect
+
+# Every CRM email that lands in Simon's own inbox starts with "smCRM " so one inbox rule catches
+# all of them. Applied centrally here rather than at each call site: there are a dozen owner
+# notifications across seven scripts, and any new one would otherwise have to remember the prefix.
+# Keyed on the INTENDED recipient, so a client email that safe-mode reroutes to Simon is not
+# tagged as a CRM notification (it keeps its "[SAFE -> client]" marker instead).
+OWNER_ADDR = "simon@thesimonshow.com"
+_SMCRM_TAG = re.compile(r"^\s*\[?\s*smCRM\s*\]?\s*[-:]?\s*", re.I)
+
+def is_owner_addr(to_email, cfg=None):
+    a = str(to_email or "").strip().lower()
+    return a == OWNER_ADDR or (bool(cfg) and a == str(cfg.get("from_email") or "").strip().lower())
+
+def smcrm_subject(subject):
+    """Idempotent: normalises any existing smCRM / [smCRM] tag instead of doubling it."""
+    return "smCRM " + _SMCRM_TAG.sub("", str(subject or "")).lstrip()
 
 # Signature card image: embedded INLINE (Content-ID) so email clients render it without the
 # recipient clicking "display images" (which they must do for remote-URL images).
@@ -41,6 +57,8 @@ def send_email(to_email, subject, html_body, reply_to=None, attachments=None, ow
     reroute = cfg["safe_mode"] and not owner
     real_to = cfg["safe_recipient"] if reroute else to_email
     subj = f"[SAFE -> {to_email}] {subject}" if reroute else subject
+    if is_owner_addr(to_email, cfg):        # anything addressed to Simon gets the smCRM prefix
+        subj = smcrm_subject(subj)
 
     msg = EmailMessage()
     msg["From"] = f"{cfg['from_name']} <{cfg['from_email']}>"

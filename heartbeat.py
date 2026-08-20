@@ -142,7 +142,7 @@ def check(cur, name, send=True):
                 return
         print("heartbeat: %s STALE (%.1fh > %dh) -> alerting" % (name, age_h, max_h))
         if send:
-            _send("[smCRM] %s may have STOPPED" % label, _alert_html(label, name, last_dt, age_h))
+            _send("%s may have STOPPED" % label, _alert_html(label, name, last_dt, age_h))
             _set(cur, alert_key, _utcnow().isoformat())
             try:                                            # out-of-band phone push (roadmap #5)
                 import join
@@ -153,7 +153,7 @@ def check(cur, name, send=True):
         if prev_alert:                                  # it had been alerted -> it just recovered
             print("heartbeat: %s recovered (%.1fh) -> clearing alert" % (name, age_h))
             if send:
-                _send("[smCRM] %s is running again" % label, _recovered_html(label, last_dt))
+                _send("%s is running again" % label, _recovered_html(label, last_dt))
                 _del(cur, alert_key)
         else:
             print("heartbeat: %s ok (%.1fh)" % (name, age_h))

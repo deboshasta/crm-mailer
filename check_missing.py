@@ -68,7 +68,7 @@ def main():
     for sd,nm,key,mode,blanks in rows:
         print(f"  {sd}  {nm[:24]:24s} [{key}] blanks: {', '.join(blanks)}")
     if "--send" in sys.argv:
-        r = mailer.send_email("simon@thesimonshow.com", f"[smCRM] {len(rows)} upcoming email(s) need info", body)
+        r = mailer.send_email("simon@thesimonshow.com", f"{len(rows)} upcoming email(s) need info", body)
         print("emailed report ->", r["routed_to"])
     return body
 
