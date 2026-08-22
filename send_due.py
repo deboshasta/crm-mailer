@@ -1246,9 +1246,12 @@ def main():
         when = V["ShowDate"] or (str(d.get("show_date")) if d.get("show_date") else "TBD")
         subj = f"pictures received for {when} / {who}"
         crm_url = f"{CRM_BASE}/?deal={d['id']}"
+        photos_url = f"{crm_url}&photos=1"                     # opens the deal focused on the Pictures section
         body = ('<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">'
-                f'<p style="margin:0">Download pictures at <a href="{html.escape(crm_url)}" '
-                f'style="color:#1155cc;font-weight:bold;text-decoration:underline">{html.escape(crm_url)}</a></p></div>')
+                f'<p style="margin:0 0 10px">Download pictures at <a href="{html.escape(photos_url)}" '
+                f'style="color:#1155cc;font-weight:bold;text-decoration:underline">{html.escape(photos_url)}</a></p>'
+                f'<p style="margin:0">Open the deal at <a href="{html.escape(crm_url)}" '
+                f'style="color:#1155cc;text-decoration:underline">{html.escape(crm_url)}</a></p></div>')
         photo_due.append((d, subj, body))
     print(f"{TODAY}  -  {len(photo_due)} photo notification(s) due")
     for (d, subj, body) in photo_due:
