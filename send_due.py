@@ -129,6 +129,7 @@ CUE = [
     ("refer","stage",0,"flag",("refer",)),
     ("closed_lost_daybefore","show",-1,"flag",("closed_lost",)),
     ("closed_lost_after","show",2,"flag",("closed_lost",)),
+    ("closed_lost_reengage","stage",319,"flag",("closed_lost",)),   # 10.5mo after MARKED lost: annual win-back, ~6wk before the decision anniversary
     ("refer_won_daybefore","show",-1,"auto",("refer_won",)),
     ("refer_won_after","show",2,"auto",("refer_won",)),
 ]
@@ -701,7 +702,8 @@ def main():
     # EGRESS: fetch only deals this run can act on (was: all 512 rows incl. every cue_state, ~1MB/run).
     # Kept sets (mirror every pass below — update BOTH when adding a pass):
     #   * CUE stages (incl. gcal/w9/gig check-ins/magic-castle-cw subsets of these)
-    #   * closed_lost within a 60-day show window (closed_lost_daybefore/_after flags)
+    #   * closed_lost: within 60 days of the show (daybefore/_after, show-anchored) OR ~10.5 months
+    #     after it was MARKED lost (closed_lost_reengage, anchor=stage_changed_at, off:319)
     #   * un-notified trivia/photo submissions (any stage)
     #   * paid deposits whose magic_castle invite hasn't been handled (any stage)
     #   * any live cue entry with send_now / blocked / pending_approval (any stage - the
@@ -718,7 +720,10 @@ def main():
         stage in ('booked','proposal_sent','schedule_call','refer')
         or (stage in ('closed_won','refer_won')
             and (show_date is null or show_date >= current_date - 300))
-        or (stage = 'closed_lost' and show_date is not null and show_date >= current_date - 60)
+        or (stage = 'closed_lost' and (
+                (show_date is not null and show_date >= current_date - 60)                     -- daybefore(-1)/after(+2), show-anchored
+                or (stage_changed_at is not null                                               -- reengage(+319 from stage_changed_at): 10.5mo win-back
+                    and stage_changed_at >= current_date - 380 and stage_changed_at <= current_date - 300)))
         or (trivia_received_at is not null and (trivia_notified_at is null or trivia_notified_at < trivia_received_at))
         or (photos_received_at is not null and (photos_notified_at is null or photos_notified_at < photos_received_at))
         or (deposit_status = 'paid'
