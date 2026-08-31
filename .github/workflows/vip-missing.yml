@@ -9,6 +9,8 @@ on:
   schedule:
     - cron: '0 13 * * *'      # ~9am ET (EDT) / ~8am ET (EST) - same daily slot as the blocked-email nag
   workflow_dispatch:
+  repository_dispatch:        # lets a manual /dispatches (or a future cron-job.org job) fire it on demand
+    types: [vip-missing]
 
 concurrency:
   group: crm-vip-missing
