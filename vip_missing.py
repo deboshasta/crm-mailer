@@ -11,7 +11,8 @@ Two distinct states per item (do not conflate):
   * requested  — Simon asked the client for it (require_trivia; photo_goh/guest_limit > 0)
   * received   — the CLIENT submitted it            (trivia_received_at / photos_received_at)
   * done       — SIMON prepared the customization    (trivia_done_at / photos_done_at)  <- what this chases
-The mark-done buttons hit vercel-send/api/mark-done.js (auth = the deal's customize_token).
+The mark-done buttons hit vercel-send/api/approve-email.js (?a=markdone; auth = the deal's
+customize_token) — folded there rather than its own function because Vercel Hobby caps 12 per deploy.
 
 Reminder days before the show: 6 weeks (42d), 4 weeks (28d), 10 days, 7 days, then EVERY day from 6
 days out down to and including show day (0). Nothing after the show. An item drops off the moment it
@@ -35,7 +36,7 @@ REMINDER_DAYS = {42, 28, 10} | set(range(0, 8))   # {0,1,2,3,4,5,6,7,10,28,42}
 MAX_LOOKAHEAD = 42                                  # furthest reminder = 6 weeks out
 URGENT_SMS_MAX_DAYS = 7                              # also text the phone within the final week
 CRM_BASE = "https://crm.thesimonshow.com"
-MARKDONE_BASE = "https://crm-send-the-simon-show.vercel.app/api/mark-done"
+MARKDONE_BASE = "https://crm-send-the-simon-show.vercel.app/api/approve-email?a=markdone"  # folded into approve-email (Hobby 12-fn cap)
 SMS_ADDR = "7324926071@vtext.com"
 OWNER = "simon@thesimonshow.com"
 
@@ -118,11 +119,11 @@ def main():
         buttons = ""
         if a["token"]:
             if a["trivia_out"]:
-                buttons += _btn(f"{MARKDONE_BASE}?t={a['token']}&which=trivia", "CLICK HERE to confirm you did trivia", "#1f8f5f")
+                buttons += _btn(f"{MARKDONE_BASE}&t={a['token']}&which=trivia", "CLICK HERE to confirm you did trivia", "#1f8f5f")
             if a["photos_out"]:
-                buttons += _btn(f"{MARKDONE_BASE}?t={a['token']}&which=photos", "CLICK HERE to confirm you did picture customization", "#1f8f5f")
+                buttons += _btn(f"{MARKDONE_BASE}&t={a['token']}&which=photos", "CLICK HERE to confirm you did picture customization", "#1f8f5f")
             if a["trivia_out"] and a["photos_out"]:
-                buttons += _btn(f"{MARKDONE_BASE}?t={a['token']}&which=both", "CLICK HERE to confirm you did BOTH", "#0b5")
+                buttons += _btn(f"{MARKDONE_BASE}&t={a['token']}&which=both", "CLICK HERE to confirm you did BOTH", "#0b5")
         else:
             buttons = (f'<a href="{html.escape(deal_url)}" style="color:#1155cc;font-weight:bold">Open the deal to mark it done</a>'
                        ' (no customize link on this deal yet)')
