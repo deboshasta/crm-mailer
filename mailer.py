@@ -14,15 +14,15 @@ from db import connect
 # Keyed on the INTENDED recipient, so a client email that safe-mode reroutes to Simon is not
 # tagged as a CRM notification (it keeps its "[SAFE -> client]" marker instead).
 OWNER_ADDR = "simon@thesimonshow.com"
-_SMCRM_TAG = re.compile(r"^\s*\[?\s*smCRM\s*\]?\s*[-:]?\s*", re.I)
+_SMCRM_TAG = re.compile(r"^\s*(?:\U0001F4BB️?\s*)?\[?\s*smCRM\s*\]?\s*[-:]?\s*", re.I)
 
 def is_owner_addr(to_email, cfg=None):
     a = str(to_email or "").strip().lower()
     return a == OWNER_ADDR or (bool(cfg) and a == str(cfg.get("from_email") or "").strip().lower())
 
 def smcrm_subject(subject):
-    """Idempotent: normalises any existing smCRM / [smCRM] tag instead of doubling it."""
-    return "smCRM " + _SMCRM_TAG.sub("", str(subject or "")).lstrip()
+    """Idempotent: normalises any existing (computer-emoji) smCRM / [smCRM] tag instead of doubling it."""
+    return "\U0001F4BB smCRM " + _SMCRM_TAG.sub("", str(subject or "")).lstrip()
 
 # Signature card image: embedded INLINE (Content-ID) so email clients render it without the
 # recipient clicking "display images" (which they must do for remote-URL images).
