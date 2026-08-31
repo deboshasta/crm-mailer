@@ -1,0 +1,40 @@
+name: CRM VIP customizations missing
+
+# Once a day, alert Simon for every Closed-Won show 0-7 days out that STILL has trivia and/or
+# photos requested-but-not-received: a full email to Simon + a text to his phone (vtext gateway),
+# subject "URGENT VIP customizations missing for <client> / <show date>". Own daily cron so the
+# alert lands exactly once a day (separate from the 20-min sweep). Logic lives in vip_missing.py.
+
+on:
+  schedule:
+    - cron: '0 13 * * *'      # ~9am ET (EDT) / ~8am ET (EST) - same daily slot as the blocked-email nag
+  workflow_dispatch:
+
+concurrency:
+  group: crm-vip-missing
+  cancel-in-progress: false
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      DB_PASSWORD:  ${{ secrets.DB_PASSWORD }}
+      DB_HOST:      ${{ vars.DB_HOST }}
+      DB_USER:      ${{ vars.DB_USER }}
+      DB_PORT:      ${{ vars.DB_PORT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: VIP customizations-missing daily alert
+        run: python vip_missing.py --send
+      - name: Alert Simon on failure
+        if: failure()
+        env:
+          FAIL_LABEL: "VIP customizations-missing alert"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python notify_fail.py
