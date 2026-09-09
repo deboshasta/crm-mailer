@@ -19,7 +19,9 @@ CRM_BASE = "https://crm.thesimonshow.com"
 # Board order and colours mirror STAGES / STAGE_COLOR_DEFAULT in web/app.js, so the email reads like
 # the kanban. Deliberately excluded: 'castle_invite_sent' (an archive bucket, not a pipeline stage),
 # 'nothing_due' (display-only, never a deals.stage value), and 'follow_up' (a dead enum value no row
-# uses). If you add a stage to the board, add it here too.
+# uses). 'on_hold' was DELETED from the board 2026-09-09 while empty; its enum value survives
+# (Postgres has no DROP VALUE) but nothing can reach it, so it is not listed either.
+# If you add a stage to the board, add it here too.
 STAGES = [
     ("inquiry",       "Inquiry",                  "#8b93a1"),
     ("schedule_call", "Schedule Call",            "#4db6e8"),
@@ -28,7 +30,6 @@ STAGES = [
     ("proposal_sent", "Proposal Sent / Follow-up","#a78bfa"),
     ("refer",         "Refer",                    "#d072b0"),
     ("booked",        "Booked Pending Paperwork", "#f0913e"),
-    ("on_hold",       "On Hold",                  "#6b747e"),
     ("closed_won",    "Closed Won",               "#3ecf8e"),
     ("refer_won",     "Refer Won",                "#3bb9a3"),
     ("closed_lost",   "Closed Lost",              "#f0616d"),
