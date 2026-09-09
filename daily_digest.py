@@ -14,7 +14,7 @@ def money(v):
     except: return "-"
 STAGE_LABEL = {"inquiry":"Inquiry","schedule_call":"Schedule Call","qualifying":"Qualifying",
                "proposal_sent":"Proposal Sent","follow_up":"Follow-up","refer":"Refer",
-               "booked":"Booked","closed_won":"Closed Won","closed_lost":"Closed Lost"}
+               "booked":"Booked Pending Paperwork","closed_won":"Closed Won","closed_lost":"Closed Lost"}
 
 def main():
     c=connect(); cur=c.cursor()
