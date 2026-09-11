@@ -13,6 +13,14 @@ on:
     # run no-ops unless the 3am dispatch genuinely didn't happen. Pass --force to override.
     - cron: '0 11 * * *'
   workflow_dispatch:
+    # Without this, a hand-run from the Actions tab could never actually produce a backup: backup.py
+    # self-gates on SKIP_IF_NEWER_THAN_H=20, so any manual run on a day the 3am dispatch already
+    # succeeded exited as a no-op AND reported success. Tick this to dump regardless.
+    inputs:
+      force:
+        description: 'Force a dump even if one ran in the last 20h'
+        type: boolean
+        default: false
   repository_dispatch:
     types: [backup-run]
 
@@ -56,7 +64,8 @@ jobs:
           mkdir -p ~/.config/rclone
           printf '%s' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
       - name: Run backup
-        run: python backup.py
+        # inputs.force is null for schedule / repository_dispatch, so those keep the self-gate.
+        run: python backup.py ${{ inputs.force && '--force' || '' }}
       - name: Alert Simon on failure
         if: failure()
         env:
