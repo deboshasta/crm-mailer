@@ -99,7 +99,19 @@ def pick_trivia_set(deal):
     if et == "municipal":  return TRIVIA_SETS["nonprofit"]
     return TRIVIA_SETS["private"]
 
-PERF = {}   # performer_id -> {first_name, full_name}, loaded in main(); PerformerName merge uses first_name
+PERF = {}   # performer_id -> {first_name, full_name}, loaded in main()
+
+
+def perf_first_name(p):
+    """{{PerformerName}} is ALWAYS just a first name -- "Have fun with Marco", never "Marco Fishman".
+
+    Takes the LEADING WORD rather than trusting the column: a performer record can hold a full name
+    in first_name. As of 2026-09-12 one does -- first_name "Marco Fishman", full_name "Marco", the
+    two swapped -- and reading first_name alone put the full name into a client email. Falls back to
+    full_name for a record whose first_name is blank. Mirrored in app.js perfFirstName().
+    """
+    p = p or {}
+    return (((p.get("first_name") or p.get("full_name") or "").strip().split()) or [""])[0]
 
 # (key, anchor, offset_days, mode, stages)
 CUE = [
@@ -481,7 +493,7 @@ def merge_values(deal, contact):
         "GuestOfHonorMagicLine": (f"{deal.get('guest_of_honor')} has gotten obsessed with magic and is doing the show." if deal.get("guest_of_honor") else "One of our guests has gotten obsessed with magic, and is going to do the show himself."),
         "ProposalLink": deal.get("proposal_link") or "",
         "CustomizeLink": (f"{CUSTOMIZE_BASE}?t={deal.get('customize_token')}" if deal.get("customize_token") else ""),
-        "PerformerName": (PERF.get(deal.get("performer_id")) or {}).get("first_name") or "",
+        "PerformerName": perf_first_name(PERF.get(deal.get("performer_id"))),
         "EventType": (deal.get("event_type","").replace("_"," ").title()+" event") if deal.get("event_type") else "event",
         "ProposalSubject": deal.get("deal_name") or deal.get("occasion") or "your event",
         "ThreadSubject": deal.get("deal_name") or deal.get("occasion") or "your event",
