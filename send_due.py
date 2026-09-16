@@ -101,6 +101,12 @@ def pick_trivia_set(deal):
 
 PERF = {}   # performer_id -> {first_name, full_name}, loaded in main()
 
+# Deal ids where the CLIENT has said the money is on its way (confirm_deposit_payment on the invoice
+# page), the deposit is not marked paid yet, and the method is not ACH. Loaded in main().
+# ACH is deliberately excluded: "Request ACH details" is a request FOR details, not a claim of
+# payment, so those deals must keep getting chased.
+DEP_CLAIMED = set()
+
 
 def perf_first_name(p):
     """{{PerformerName}} is ALWAYS just a first name -- "Have fun with Marco", never "Marco Fishman".
@@ -151,7 +157,12 @@ def _flag_suppressed(key, d):
     """A FLAG email that should NOT surface at all (mirror of the app's showIf guards), so we never send
     Simon an approval request for it. (customization_request is also guarded in the loop.)"""
     if key in ("deposit_chase_1", "deposit_chase_2"):
-        return d.get("deposit_status") in ("paid", "not_required")
+        if d.get("deposit_status") in ("paid", "not_required"):
+            return True
+        # The client already told us a cheque/Venmo/Zelle/PayPal payment is on its way. Chasing them
+        # for money they have said they sent reads badly, so hold the chase. deposit_mailed_nag.py
+        # then nags SIMON weekly instead, until he marks the deposit paid.
+        return d.get("id") in DEP_CLAIMED
     if key == "balance_reminder":
         try: bal = float(d.get("balance_amount") or 0)
         except (TypeError, ValueError): bal = 0.0
@@ -757,9 +768,15 @@ def main():
         CB={r[0]:dict(zip(["id","first_name","last_name","full_name","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
     else:
         CB={}
-    global PERF
+    global PERF, DEP_CLAIMED
     cur.execute("select id, first_name, full_name from performers")
     PERF={r[0]:{"first_name":r[1],"full_name":r[2]} for r in cur.fetchall()}
+    # One small query, not a per-deal lookup: the set is normally 1-3 rows.
+    cur.execute("""select distinct dd.deal_id from deposit_docs dd join deals d on d.id=dd.deal_id
+                   where dd.confirmed_at is not null and coalesce(dd.confirmed_method,'') <> 'ACH'
+                     and coalesce(d.deposit_status::text,'') not in ('paid','not_required')""")
+    DEP_CLAIMED=set(r[0] for r in cur.fetchall())
+    if DEP_CLAIMED: print("deposit chase held for %d deal(s) - client says payment is on the way" % len(DEP_CLAIMED))
     cur.execute("select key,subject,body_html from templates where active=true")
     TPL={r[0]:{"subject":r[1],"body":r[2]} for r in cur.fetchall()}
     signature=TPL.get("_signature",{}).get("body","")

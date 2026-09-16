@@ -1,0 +1,42 @@
+name: CRM deposit-mailed nag
+
+# Weekly. Every deposit the CLIENT said was sent (cheque/Venmo/Zelle/PayPal) that is still not marked
+# paid in the CRM. send_due.py HOLDS deposit_chase_1/2 for those deals, so without this nobody would
+# be reminded at all and a cheque that never arrived would simply be forgotten.
+#
+# Monday 12:30 UTC = 8:30am EDT / 7:30am EST. Deliberately off the :00 slot shared by nags.yml,
+# blocked-digest.yml and vip-missing.yml. Owner mail, so the 9am-9pm ET client window does not apply.
+
+on:
+  schedule:
+    - cron: '30 12 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: crm-deposit-mailed-nag
+  cancel-in-progress: false
+
+jobs:
+  nag:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      DB_PASSWORD:  ${{ secrets.DB_PASSWORD }}
+      DB_HOST:      ${{ vars.DB_HOST }}
+      DB_USER:      ${{ vars.DB_USER }}
+      DB_PORT:      ${{ vars.DB_PORT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Deposit-mailed weekly nag
+        run: python deposit_mailed_nag.py --send
+      - name: Alert Simon on failure
+        if: failure()
+        env:
+          FAIL_LABEL: "deposit-mailed nag"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python notify_fail.py
