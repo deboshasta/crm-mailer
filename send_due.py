@@ -311,9 +311,12 @@ def _maps_link(addr):
     return '<a href="%s" style="color:#1155cc;text-decoration:underline">%s</a>' % (html.escape(url), html.escape(a))
 
 def _client_info_rows(V):
-    """Client contact block as THREE separate (label, html_value) lines - Name, Email (mailto), Phone
-    (tel) - shown the same way in every self-notification to Simon. Missing email/phone -> em dash."""
-    name  = V.get("ClientFullName") or "-"
+    """Client contact block as separate (label, html_value) lines - shown the same way in every
+    self-notification to Simon. Company deal -> "Client Name: <Company>" + a "Contact:" line for the
+    person (Simon 2026-09-17); otherwise a single "Name" line. Then Email (mailto), Phone (tel).
+    Missing email/phone -> em dash."""
+    name    = V.get("ClientFullName") or "-"
+    company = (V.get("Company") or "").strip()
     email = (V.get("ClientEmail") or "").strip()
     phone = (V.get("ClientPhone") or "").strip()
     email_html = ('<a href="mailto:%s" style="color:#1155cc;text-decoration:underline">%s</a>'
@@ -323,7 +326,9 @@ def _client_info_rows(V):
         num = re.sub(r"[^\d+]", "", re.split(r"(?i)\s*(?:x|ext\.?)\s*", phone, maxsplit=1)[0])
         phone_html = (('<a href="tel:%s" style="color:#1155cc;text-decoration:underline">%s</a>'
                        % (html.escape(num), html.escape(phone))) if num else html.escape(phone))
-    return [("Name", html.escape(str(name))), ("Email", email_html), ("Phone", phone_html)]
+    name_rows = ([("Client Name", html.escape(company)), ("Contact", html.escape(str(name)))]
+                 if company else [("Name", html.escape(str(name)))])
+    return name_rows + [("Email", email_html), ("Phone", phone_html)]
 
 def _gcal_email_html(d, V, token, reminder):
     """GCal! email to Simon: a calendar link for the show + an 'Update GCal link' button (paste page).
