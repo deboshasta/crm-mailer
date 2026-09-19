@@ -56,7 +56,8 @@ def main():
             "require_trivia","trivia_received_at","trivia_done_at",
             "photo_goh_limit","photo_guest_limit","photos_received_at","photos_done_at",
             "show_time","venue_address","occasion","company","guest_of_honor","audience_details","show_format",
-            "amount","deposit_amount","balance_amount","event_type","performer_id","proposal_link","deposit_status"]
+            "amount","deposit_amount","balance_amount","event_type","performer_id","proposal_link","deposit_status",
+            "cue_state"]   # cue_state only for _custsnooze (see below)
     cur.execute("select "+",".join(cols)+" from deals "
                 "where stage='closed_won' and show_date is not null "
                 "and show_date >= %s and show_date <= %s",
@@ -79,6 +80,17 @@ def main():
         photos_out = photos_req and not d.get("photos_done_at")
         if not (trivia_out or photos_out):
             continue
+        # Snoozed from the CRM (cue_state._custsnooze.until). Muting the board but still mailing
+        # would make the snooze useless -- the emails ARE the warning being snoozed. The app will
+        # not let a snooze run closer than 4 days to the show, so this cannot silence the final
+        # run-up. Any unparseable value is ignored, i.e. the reminder still goes out.
+        _sn = ((d.get("cue_state") or {}).get("_custsnooze") or {}).get("until")
+        if _sn:
+            try:
+                if datetime.datetime.fromisoformat(str(_sn).replace("Z", "+00:00")) > datetime.datetime.now(datetime.timezone.utc):
+                    continue
+            except (ValueError, TypeError):
+                pass
         contact = CB.get(d.get("primary_contact_id")) or {}
         V = send_due.merge_values(d, contact)
         alerts.append({
