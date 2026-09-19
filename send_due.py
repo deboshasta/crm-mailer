@@ -175,8 +175,9 @@ def _flag_suppressed(key, d):
         # for money they have said they sent reads badly, so hold the chase. deposit_mailed_nag.py
         # then nags SIMON weekly instead, until he marks the deposit paid.
         return d.get("id") in DEP_CLAIMED
-    if key in REENGAGE_CHAIN[1:]:
-        # Years 2-4 only. The year-1 email is left exactly as it was.
+    if key in REENGAGE_CHAIN:
+        # Every year of the win-back, year 1 included (Simon 2026-09-19): a client who has already
+        # come back should never be told "you were looking into having me perform".
         return d.get("id") in REENGAGE_BLOCKED
     if key == "balance_reminder":
         try: bal = float(d.get("balance_amount") or 0)
@@ -511,6 +512,7 @@ def _cap_full(contact):
 
 def merge_values(deal, contact):
     sd=_d(deal.get("show_date"))
+    _ey=_d(deal.get("created_at"))
     first = (contact.get("first_name") or (contact.get("full_name") or "").split(" ")[0] or "")
     first = re.sub(r"(^|\s)(\S)", lambda m: m.group(1)+m.group(2).upper(), first)   # always capitalize first names
     V={
@@ -519,7 +521,13 @@ def merge_values(deal, contact):
         # The year they were ENQUIRING, not the year of the would-be event: 13% of closed-lost
         # deals span a new year between the two (enquire in Nov for a January event), and
         # "Back in <event year> you were looking into..." would be wrong for every one of them.
-        "EnquiryYear": (str(_d(deal.get("created_at")).year) if _d(deal.get("created_at")) else ""),
+        "EnquiryYear": (str(_ey.year) if _ey else ""),
+        # Sentence-initial phrase form. Year 1 can fire in the SAME calendar year as the enquiry
+        # (enquire and lose in January, win-back lands in November), where "Back in 2026" during
+        # 2026 reads wrong. Years 3-4 use EnquiryYear mid-sentence instead, where the enquiry is
+        # always several years back and the bare number reads better.
+        "EnquiryWhen": ("" if not _ey else
+                        ("Earlier this year" if _ey.year == TODAY.year else "Back in %d" % _ey.year)),
         # OWNER-ONLY. The dot in the key is the safety mechanism: template tokens are matched by
         # {{\w+}} and a dot is not a word character, so no client template can render this even by
         # accident. Do not rename it to a {{...}}-shaped key. MIRRORED in app.js mergeValues().
