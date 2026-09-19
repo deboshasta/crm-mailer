@@ -328,7 +328,12 @@ def _client_info_rows(V):
                        % (html.escape(num), html.escape(phone))) if num else html.escape(phone))
     name_rows = ([("Client Name", html.escape(company)), ("Contact", html.escape(str(name)))]
                  if company else [("Name", html.escape(str(name)))])
-    return name_rows + [("Email", email_html), ("Phone", phone_html)]
+    # Pronunciation sits on the line AFTER the name, and only when it is filled in -- a blank one
+    # prints no label at all rather than an empty row (Simon 2026-09-19). This block is owner-only
+    # by construction: _client_info_rows is never called from a client-facing builder.
+    pron = (V.get("pron.line") or "").strip()
+    pron_rows = [("Pronunciation", html.escape(pron))] if pron else []
+    return name_rows + pron_rows + [("Email", email_html), ("Phone", phone_html)]
 
 def _gcal_email_html(d, V, token, reminder):
     """GCal! email to Simon: a calendar link for the show + an 'Update GCal link' button (paste page).
@@ -496,6 +501,10 @@ def merge_values(deal, contact):
     V={
         "ClientFirstName":first, "ClientFullName":_cap_full(contact),
         "ClientEmail":contact.get("email") or "", "ClientPhone":contact.get("phone_mobile") or contact.get("phone_other") or "",
+        # OWNER-ONLY. The dot in the key is the safety mechanism: template tokens are matched by
+        # {{\w+}} and a dot is not a word character, so no client template can render this even by
+        # accident. Do not rename it to a {{...}}-shaped key. MIRRORED in app.js mergeValues().
+        "pron.line": (contact.get("name_pronunciation") or "").strip(),
         "ShowDate": (f"{WD[sd.weekday()]}, {MO[sd.month-1]} {_ord(sd.day)}, {sd.year}" if sd else ""),
         "ShowDateNoYear": (f"{WD[sd.weekday()]}, {MO[sd.month-1]} {_ord(sd.day)}" if sd else ""),
         "ShowDateShort": (f"{MO[sd.month-1][:3]} {sd.day}, {sd.year}" if sd else ""),
@@ -769,8 +778,8 @@ def main():
     # Every CB lookup below is CB.get(deal.primary_contact_id) for a deal in `deals`, so this is complete.
     _cids=list({str(d.get("primary_contact_id")) for d in deals if d.get("primary_contact_id")})
     if _cids:
-        cur.execute("select id,first_name,last_name,full_name,email,phone_mobile,phone_other from contacts where id::text = any(%s)", (_cids,))
-        CB={r[0]:dict(zip(["id","first_name","last_name","full_name","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
+        cur.execute("select id,first_name,last_name,full_name,name_pronunciation,email,phone_mobile,phone_other from contacts where id::text = any(%s)", (_cids,))
+        CB={r[0]:dict(zip(["id","first_name","last_name","full_name","name_pronunciation","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
     else:
         CB={}
     global PERF, DEP_CLAIMED
