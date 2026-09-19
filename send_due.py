@@ -106,6 +106,14 @@ PERF = {}   # performer_id -> {first_name, full_name}, loaded in main()
 # ACH is deliberately excluded: "Request ACH details" is a request FOR details, not a claim of
 # payment, so those deals must keep getting chased.
 DEP_CLAIMED = set()
+# deal ids whose CLIENT has come back since this deal was lost (they have a newer deal). The
+# multi-year win-back chain stops for them -- chasing someone who already rebooked reads badly.
+REENGAGE_BLOCKED = set()
+# The win-back chain, in order. Each step is anchored to the PREVIOUS one actually being SENT,
+# not to a fixed offset from stage_changed_at, because these are flag-mode: Simon approves them
+# when he gets to them, so 'a year after the last one went out' is the only cadence that holds.
+REENGAGE_CHAIN = ("closed_lost_reengage", "closed_lost_reengage_y2",
+                  "closed_lost_reengage_y3", "closed_lost_reengage_y4")
 
 
 def perf_first_name(p):
@@ -148,6 +156,10 @@ CUE = [
     ("closed_lost_daybefore","show",-1,"flag",("closed_lost",)),
     ("closed_lost_after","show",2,"flag",("closed_lost",)),
     ("closed_lost_reengage","stage",319,"flag",("closed_lost",)),   # 10.5mo after MARKED lost: annual win-back, ~6wk before the decision anniversary
+    # Years 2-4 of the win-back, each one year after the PREVIOUS step actually went out.
+    ("closed_lost_reengage_y2","after_sent:closed_lost_reengage",365,"flag",("closed_lost",)),
+    ("closed_lost_reengage_y3","after_sent:closed_lost_reengage_y2",365,"flag",("closed_lost",)),
+    ("closed_lost_reengage_y4","after_sent:closed_lost_reengage_y3",365,"flag",("closed_lost",)),
     ("refer_won_daybefore","show",-1,"auto",("refer_won",)),
     ("refer_won_after","show",2,"auto",("refer_won",)),
 ]
@@ -163,6 +175,9 @@ def _flag_suppressed(key, d):
         # for money they have said they sent reads badly, so hold the chase. deposit_mailed_nag.py
         # then nags SIMON weekly instead, until he marks the deposit paid.
         return d.get("id") in DEP_CLAIMED
+    if key in REENGAGE_CHAIN[1:]:
+        # Years 2-4 only. The year-1 email is left exactly as it was.
+        return d.get("id") in REENGAGE_BLOCKED
     if key == "balance_reminder":
         try: bal = float(d.get("balance_amount") or 0)
         except (TypeError, ValueError): bal = 0.0
@@ -501,6 +516,10 @@ def merge_values(deal, contact):
     V={
         "ClientFirstName":first, "ClientFullName":_cap_full(contact),
         "ClientEmail":contact.get("email") or "", "ClientPhone":contact.get("phone_mobile") or contact.get("phone_other") or "",
+        # The year they were ENQUIRING, not the year of the would-be event: 13% of closed-lost
+        # deals span a new year between the two (enquire in Nov for a January event), and
+        # "Back in <event year> you were looking into..." would be wrong for every one of them.
+        "EnquiryYear": (str(_d(deal.get("created_at")).year) if _d(deal.get("created_at")) else ""),
         # OWNER-ONLY. The dot in the key is the safety mechanism: template tokens are matched by
         # {{\w+}} and a dot is not a word character, so no client template can render this even by
         # accident. Do not rename it to a {{...}}-shaped key. MIRRORED in app.js mergeValues().
@@ -697,6 +716,12 @@ def anchor_date(deal, anchor, stages):
     if anchor=="stage":   return _d(deal.get("stage_changed_at"))
     if anchor=="proposal_sent": return _d(deal.get("proposal_sent_at"))   # follow-ups start when the proposal was sent
     if anchor=="created": return _d(deal.get("created_at"))
+    if anchor.startswith("after_sent:"):
+        # One year after the named cue was SENT. Returns None while it is unsent, so the chain
+        # simply waits -- and a cancelled step stops every later one, which is intended: if Simon
+        # killed last year's note he does not want this year's either.
+        prev = (deal.get("cue_state") or {}).get(anchor.split(":", 1)[1]) or {}
+        return _d(prev.get("sent"))
     if anchor=="after_thank_you":
         # review_request follows the ACTUAL outcome of thank_you, not the show date:
         #   thank_you SENT      -> due the DAY AFTER it was sent
@@ -760,7 +785,17 @@ def main():
         or (stage = 'closed_lost' and (
                 (show_date is not null and show_date >= current_date - 60)                     -- daybefore(-1)/after(+2), show-anchored
                 or (stage_changed_at is not null                                               -- reengage(+319 from stage_changed_at): 10.5mo win-back
-                    and stage_changed_at >= current_date - 380 and stage_changed_at <= current_date - 300)))
+                    and stage_changed_at >= current_date - 380 and stage_changed_at <= current_date - 300)
+                -- ...and years 2-4, each due a year after the PREVIOUS step was sent. Bounded to a
+                -- 95-day window per step so this stays a handful of rows and never grows unbounded.
+                -- Once a step is queued for approval the pending_approval clause below keeps the
+                -- deal in the sweep, so the window only has to be wide enough to catch the queueing.
+                -- Dates are compared as ISO TEXT (no ::date cast) so a malformed value cannot error.
+                or exists (select 1 from (values ('closed_lost_reengage'),('closed_lost_reengage_y2'),
+                                                 ('closed_lost_reengage_y3')) _p(k)
+                           where coalesce(cue_state->_p.k->>'sent','') <> ''
+                             and cue_state->_p.k->>'sent' <= to_char(current_date - 365,'YYYY-MM-DD')
+                             and cue_state->_p.k->>'sent' >= to_char(current_date - 460,'YYYY-MM-DD'))))
         or (trivia_received_at is not null and (trivia_notified_at is null or trivia_notified_at < trivia_received_at))
         or (photos_received_at is not null and (photos_notified_at is null or photos_notified_at < photos_received_at))
         or (deposit_status = 'paid'
@@ -782,7 +817,7 @@ def main():
         CB={r[0]:dict(zip(["id","first_name","last_name","full_name","name_pronunciation","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
     else:
         CB={}
-    global PERF, DEP_CLAIMED
+    global PERF, DEP_CLAIMED, REENGAGE_BLOCKED
     cur.execute("select id, first_name, full_name from performers")
     PERF={r[0]:{"first_name":r[1],"full_name":r[2]} for r in cur.fetchall()}
     # One small query, not a per-deal lookup: the set is normally 1-3 rows.
@@ -791,6 +826,16 @@ def main():
                      and coalesce(d.deposit_status::text,'') not in ('paid','not_required')""")
     DEP_CLAIMED=set(r[0] for r in cur.fetchall())
     if DEP_CLAIMED: print("deposit chase held for %d deal(s) - client says payment is on the way" % len(DEP_CLAIMED))
+    # One query per run: lost deals whose client has since come back with a NEW deal. Years 2-4 of
+    # the win-back are suppressed for these (see _flag_suppressed).
+    cur.execute("""select d.id from deals d
+                   where d.stage='closed_lost' and d.primary_contact_id is not null
+                     and d.stage_changed_at is not null
+                     and exists (select 1 from deals n
+                                 where n.primary_contact_id = d.primary_contact_id
+                                   and n.id <> d.id and n.created_at > d.stage_changed_at)""")
+    REENGAGE_BLOCKED=set(r[0] for r in cur.fetchall())
+    if REENGAGE_BLOCKED: print("win-back chain held for %d deal(s) - client already came back" % len(REENGAGE_BLOCKED))
     cur.execute("select key,subject,body_html from templates where active=true")
     TPL={r[0]:{"subject":r[1],"body":r[2]} for r in cur.fetchall()}
     signature=TPL.get("_signature",{}).get("body","")
