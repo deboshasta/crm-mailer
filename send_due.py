@@ -140,10 +140,12 @@ CUE = [
     ("review_request","after_thank_you",0,"auto",("closed_won",)),   # NOT show-anchored: follows thank_you's outcome (see anchor_date)
     ("popped_into","show",14,"flag",("closed_won",)),
     ("rebook","show",240,"flag",("closed_won",)),
-    ("pf_fu1","proposal_sent",3,"auto",("proposal_sent",)),
-    ("pf_abcde","proposal_sent",7,"auto",("proposal_sent",)),
-    ("pf_shark","proposal_sent",10,"auto",("proposal_sent",)),
-    ("pf_breakup","proposal_sent",14,"auto",("proposal_sent",)),
+    # flag, not auto (Simon 2026-09-20): these chase a live prospect mid-negotiation, so each one
+    # routes through the approval request instead of sending itself. Mirrored in app.js's CUE table.
+    ("pf_fu1","proposal_sent",3,"flag",("proposal_sent",)),
+    ("pf_abcde","proposal_sent",7,"flag",("proposal_sent",)),
+    ("pf_shark","proposal_sent",10,"flag",("proposal_sent",)),
+    ("pf_breakup","proposal_sent",14,"flag",("proposal_sent",)),
     ("precall_fu1","stage",1,"auto",("schedule_call",)),
     ("precall_fu2","stage",4,"auto",("schedule_call",)),
     ("precall_abcde","stage",7,"auto",("schedule_call",)),
@@ -547,8 +549,13 @@ def merge_values(deal, contact):
         "CustomizeLink": (f"{CUSTOMIZE_BASE}?t={deal.get('customize_token')}" if deal.get("customize_token") else ""),
         "PerformerName": perf_first_name(PERF.get(deal.get("performer_id"))),
         "EventType": (deal.get("event_type","").replace("_"," ").title()+" event") if deal.get("event_type") else "event",
-        "ProposalSubject": deal.get("deal_name") or deal.get("occasion") or "your event",
-        "ThreadSubject": deal.get("deal_name") or deal.get("occasion") or "your event",
+        # ⚠️ deal_name must NEVER reach a client (Simon 2026-09-20). It is an internal label and in
+        # practice holds the client's own phone number and email address, a heart emoji and "(copy)",
+        # because a copied deal inherits the whole string. These two tokens were its only client-facing
+        # use -- "Re: {{ProposalSubject}}" on the four pf_ follow-ups -- so they now start at occasion.
+        # Mirrored in app.js mergeValues; do not "restore" the deal_name fallback.
+        "ProposalSubject": deal.get("occasion") or "your event",
+        "ThreadSubject": deal.get("occasion") or "your event",
         "LastShowYear": "",
     }
     # conditional-section flag: trivia is asked only when required and not already received (see _conditional_blocks)
