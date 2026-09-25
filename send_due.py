@@ -1409,7 +1409,10 @@ def main():
                 paid_in_full = False
             try:
                 import receipt as _rcpt
-                fname, pdf_bytes, _mime = _rcpt.make_receipt(d, contact, paid_in_full=paid_in_full)
+                # card_fee rides on the cue entry (app.js _receiptCueEntry) so this needs no extra
+                # query per pending receipt. Absent -> None -> the PDF prints no fee line.
+                fname, pdf_bytes, _mime = _rcpt.make_receipt(d, contact, paid_in_full=paid_in_full,
+                                                             card_fee=e.get('card_fee'))
                 st[key] = {**e, "pdf_b64": base64.b64encode(pdf_bytes).decode(), "pdf_filename": fname}
                 _changed.append(key); _pdf_gen += 1
                 print(f"  -> [receipt-pdf] generated {fname} for {key}")

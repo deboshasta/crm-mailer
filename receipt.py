@@ -27,8 +27,17 @@ def _date_str(v):
     except Exception:
         return str(v)
 
-def make_receipt(deal, contact, issued=None, paid_in_full=False):
-    """Returns (filename, pdf_bytes, mime) ready for mailer.send_email(attachments=[...])."""
+def make_receipt(deal, contact, issued=None, paid_in_full=False, card_fee=None):
+    """Returns (filename, pdf_bytes, mime) ready for mailer.send_email(attachments=[...]).
+
+    card_fee: the processing fee actually charged for THIS payment, or None.
+      Set by api/deposit-webhook.js as Stripe's real `amount_total` minus the invoice amount and
+      stored on deposit_docs.card_fee (see build/db/card_fee.sql); send_due.py hands it over from
+      the cue entry.
+      !! None and 0 both render NOTHING. None means "unknown" -- cash, cheque, Venmo, a manually
+         marked payment, or any card payment taken before the column existed -- and a receipt
+         asserting a "$0.00 processing fee" on a cheque is worse than saying nothing at all.
+    """
     issued = issued or datetime.date.today()
     show_str = _date_str(deal.get("show_date"))
     issued_str = f"{_MO[issued.month-1]} {issued.day}, {issued.year}"
@@ -101,6 +110,12 @@ def make_receipt(deal, contact, issued=None, paid_in_full=False):
         pdf.set_text_color(*(GOLD if gold else DARK)); pdf.set_font("Helvetica", "B" if bold else "", 10.5)
         pdf.cell(W * 0.15, 6.5, _money(value) + "  ", align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
+    try:
+        _fee = float(card_fee) if card_fee is not None else 0.0
+    except (TypeError, ValueError):
+        _fee = 0.0
+    _paid = deal.get("amount") if paid_in_full else deal.get("deposit_amount")
+
     if paid_in_full:
         summ("Total paid", deal.get("amount"), bold=True, gold=True)
         summ("Balance remaining", 0, bold=True)
@@ -108,6 +123,19 @@ def make_receipt(deal, contact, issued=None, paid_in_full=False):
         summ("Appearance fee", deal.get("amount"))
         summ("Deposit received", deal.get("deposit_amount"), bold=True, gold=True)
         summ("Balance due on arrival", deal.get("balance_amount"), bold=True)
+
+    # Itemise the card fee only when one was really charged. The three lines have to add up on the
+    # page, because the client can check them against their card statement: what the invoice asked
+    # for, the fee, and the total that actually left their card.
+    if _fee > 0:
+        try:
+            _total = round(float(_paid or 0) + _fee, 2)
+        except (TypeError, ValueError):
+            _total = None
+        pdf.ln(2)
+        summ("Card processing fee", _fee)
+        if _total is not None:
+            summ("Total charged to card", _total, bold=True)
     pdf.ln(8)
 
     # ---- thank-you note ----
