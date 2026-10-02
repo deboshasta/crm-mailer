@@ -138,7 +138,11 @@ CUE = [
     ("balance_reminder","show",-2,"flag",("booked","closed_won")),
     ("thank_you","show",1,"auto",("closed_won",)),
     ("review_request","after_thank_you",0,"auto",("closed_won",)),   # NOT show-anchored: follows thank_you's outcome (see anchor_date)
-    ("popped_into","show",14,"flag",("closed_won",)),
+    # 90, not 14 (Simon 2026-10-01). The body opens "You popped into my head!", which is only
+    # true once time has passed -- at +14 it landed on top of thank_you (+1) and review_request,
+    # i.e. a third email in two weeks claiming to be a spontaneous thought. It also now fills the
+    # 226-day silence that ran from here to rebook (+240). ⚠️ Mirrored in app.js's CUE table.
+    ("popped_into","show",90,"flag",("closed_won",)),
     ("rebook","show",240,"flag",("closed_won",)),
     # flag, not auto (Simon 2026-09-20): these chase a live prospect mid-negotiation, so each one
     # routes through the approval request instead of sending itself. Mirrored in app.js's CUE table.
