@@ -299,7 +299,8 @@ def _gcal_day_link(d):
 
 def _double_check_btn(d):
     """Amber 'DOUBLE CHECK DATE' button -> the Google Calendar day view for the show date, so Simon can
-    eyeball that day for conflicts before adding the event. Sits just BEFORE the add-to-calendar button."""
+    eyeball that day for conflicts before adding the event. Still used by the self gig check-in email
+    (removed from the GCal! reminder 2026-10-04 as redundant with STEP 1, which opens the same day)."""
     link=_gcal_day_link(d)
     if not link: return ""
     return ('<a href="%s" style="display:inline-block;background:#e0a92e;color:#3a2a00;text-decoration:none;'
@@ -371,7 +372,13 @@ def _gcal_email_html(d, V, token, reminder):
                  'margin:0 0 14px;font-weight:bold;color:#7a5a00">Reminder - add to calendar and update gcal link</div>')
     b.append('<h2 style="margin:0 0 4px">Add to calendar: %s</h2>' % html.escape(str(who)))
     b.append('<p style="color:#5f6368;margin:0 0 14px">%s%s</p>' % (html.escape(str(when)), (" at "+html.escape(stime)) if stime else ""))
-    b.append(_double_check_btn(d))                  # DOUBLE CHECK DATE button - goes before the STEP 1 / calendar button
+    # EMAIL-ONLY easy path (mirrors app.js buildGcalEmail): an inbox can't run JS, so offer a button into
+    # the CRM preview page (?gcal=1) where STEP 1 copies the info to the clipboard. Only when no saved link.
+    if not d.get("gcal_url"):
+        b.append('<div style="margin:0 0 10px"><a href="https://crm.thesimonshow.com/?deal=%s&amp;gcal=1" '
+                 'style="display:inline-block;background:#6a4ea3;color:#fff;text-decoration:none;font-weight:bold;'
+                 'padding:10px 20px;border-radius:8px">&#128203; Open in CRM to copy the info &amp; add &#8594;</a></div>'
+                 % html.escape(str(d.get("id") or "")))
     if link:
         open_lbl = "Open your event" if d.get("gcal_url") else "STEP 1: Copy info below to GCal"
         b.append('<a href="%s" style="display:inline-block;background:#1155cc;color:#fff;text-decoration:none;'
