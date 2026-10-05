@@ -540,7 +540,10 @@ def merge_values(deal, contact):
         # 2026 reads wrong. Years 3-4 use EnquiryYear mid-sentence instead, where the enquiry is
         # always several years back and the bare number reads better.
         "EnquiryWhen": ("" if not _ey else
-                        ("Earlier this year" if _ey.year == TODAY.year else "Back in %d" % _ey.year)),
+                        # "A while back", not "Earlier this year" (Simon 2026-10-05): the sentence
+                        # reads "<phrase> you were looking into having me perform at your event."
+                        # Mirrored in app.js mergeValues -- change BOTH.
+                        ("A while back" if _ey.year == TODAY.year else "Back in %d" % _ey.year)),
         # OWNER-ONLY. The dot in the key is the safety mechanism: template tokens are matched by
         # {{\w+}} and a dot is not a word character, so no client template can render this even by
         # accident. Do not rename it to a {{...}}-shaped key. MIRRORED in app.js mergeValues().
@@ -875,6 +878,36 @@ def main():
         _am=cur.fetchone(); APPROVAL_MODE=bool(_am and _am[0])
     except Exception:
         APPROVAL_MODE=False
+
+    # ---- RETRACT deposit chases that are queued but no longer needed (Simon 2026-10-05) ----------
+    # `_flag_suppressed` stops a NEW chase being queued once the deposit is paid, and app.js's showIf
+    # hides it from the ladder display -- but NEITHER retracts one that was ALREADY queued before the
+    # money arrived. That entry just sits in the approval queue, and approving it chases a client who
+    # has already paid. (Measured 2026-10-05: 4 such entries, one pending approval since 09-13 on a
+    # deal marked paid.)
+    # ⚠️ CANCELLED, not deleted. `cancelled` is the shape the rest of the system already understands --
+    # approvalPending(), hasPendingApproval() and approve_counts() all ignore it -- so the entry leaves
+    # the queue, stops counting toward the badge, and still leaves an audit trail of what was dropped.
+    # ⚠️ Covers BOTH payment routes: the Stripe webhook and a manual "mark paid" both only set
+    # deals.deposit_status, so keying on that column is what makes this catch every case.
+    _retracted = 0
+    for d in deals:
+        if (d.get("deposit_status") or "") not in ("paid", "not_required"): continue
+        _st = d.get("cue_state") or {}
+        if isinstance(_st, str):
+            try: _st = json.loads(_st or "{}")
+            except ValueError: continue
+        for _k in ("deposit_chase_1", "deposit_chase_2"):
+            _e = _st.get(_k)
+            if not isinstance(_e, dict): continue
+            if _e.get("sent") or _e.get("cancelled"): continue
+            _st[_k] = {**_e, "cancelled": True,
+                       "cancelled_reason": "deposit %s" % (d.get("deposit_status") or "paid")}
+            d["cue_state"] = _st
+            _retracted += 1
+            if SEND: _save_cue(cur, d["id"], _st, _k)
+    if _retracted:
+        print("retracted %d queued deposit chase(s) - deposit already paid / not required" % _retracted)
 
     due=[]; blocked_today=[]; new_blocks=[]; held_new=[]
     for d in deals:
