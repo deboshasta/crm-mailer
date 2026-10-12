@@ -721,18 +721,35 @@ def _claim_dispatch(cur, deal_id, key):
     except Exception:
         return True
 
+# "Fun action requested" (guest_excited) goes into the approval queue this many days before the
+# show. Simon 2026-10-13: "fun action requested email should enter approval cue 10 days before the
+# event date. if the ladder is triggered 10 days or less from the event date, it should enter the
+# approval cue immediately."
+GE_LEAD_DAYS = 10
+
 def _ge_send_date(d, key):
     """Dynamic send date for the guest_excited split (mirror of the app's _geDates). Returns a date or None.
-    show > 21d away -> now + (show-5); show <= 21d away -> once at show-8 (or today if within 8)."""
+
+    guest_excited   -> show - GE_LEAD_DAYS, or TODAY when the ladder starts inside that window.
+    guest_excited_2 -> show - 5, only while the show is more than 21 days away.
+
+    The date is RECOMPUTED from show_date on every sweep rather than stored, which is what makes
+    "move the show, the email moves with it" work for an entry that has not been queued yet. An
+    entry ALREADY sitting in the approval queue is handled by the re-date pass in main().
+
+    WARNING: guest_excited_2 is UNREACHABLE and always has been. It is only given a date while the
+    show is >21 days away, but the sweep only acts on a cue once its date has arrived (show-5, i.e.
+    5 days away) - the two conditions cannot both hold. Measured 2026-10-13: 0 sent, 0 pending
+    across 27 deals carrying the key. Left exactly as it was: making it fire would start sending a
+    second client email nobody has asked for. Decide that deliberately, not as a side effect."""
     show = _d(d.get("show_date"))
     if not show:
         return TODAY if key == "guest_excited" else None
-    days_away = (show - TODAY).days
-    if days_away > 21:
-        dt = TODAY if key == "guest_excited" else (show - datetime.timedelta(days=5))
-    elif key == "guest_excited":
-        first = show - datetime.timedelta(days=8)
-        dt = first if first > TODAY else TODAY
+    if key == "guest_excited":
+        first = show - datetime.timedelta(days=GE_LEAD_DAYS)
+        dt = first if first > TODAY else TODAY            # inside the window -> queue immediately
+    elif (show - TODAY).days > 21:
+        dt = show - datetime.timedelta(days=5)
     else:
         return None                                       # near show -> no second send
     if dt > show:
@@ -908,6 +925,46 @@ def main():
             if SEND: _save_cue(cur, d["id"], _st, _k)
     if _retracted:
         print("retracted %d queued deposit chase(s) - deposit already paid / not required" % _retracted)
+
+    # ---- RE-DATE a queued "fun action" when the SHOW DATE has moved (Simon 2026-10-13) --------
+    # "if the event date changes, the fun action email should be scheduled for the same intervals
+    #  based on the new date. if it has already been sent it does not have to enter the cue again."
+    #
+    # _ge_send_date recomputes from show_date every sweep, so a date change already reschedules an
+    # entry that has NOT been queued yet. The gap is the one already sitting in the approval queue:
+    # pending_since is stored, so it just stays there on the old timing.
+    #
+    # The test is simply "is this entry's correct date still in the future?" - no need to record the
+    # show_date it was computed against:
+    #   * show pushed LATER  -> the new show-10 is in the future -> unqueue, it returns on the day
+    #   * show pulled EARLIER -> the new date is today or past    -> leave it, it is genuinely due
+    #   * second send no longer applicable (want is None)         -> unqueue
+    # WARNING: this UNQUEUES, it does not cancel. `cancelled` is permanent - the main loop skips a
+    # cancelled entry forever - so cancelling here would mean a moved show silently kills the email
+    # instead of moving it. Only the approval flags come off; body/subject/to are kept so nothing
+    # hand-edited is lost.
+    # WARNING: `sent` is checked FIRST and never touched - an email already out does not come back.
+    _redated = 0
+    for d in deals:
+        _st = d.get("cue_state") or {}
+        if isinstance(_st, str):
+            try: _st = json.loads(_st or "{}")
+            except ValueError: continue
+        for _k in ("guest_excited", "guest_excited_2"):
+            _e = _st.get(_k)
+            if not isinstance(_e, dict): continue
+            if _e.get("sent") or _e.get("cancelled"): continue
+            if not _e.get("pending_approval"): continue
+            _want = _ge_send_date(d, _k)
+            if _want is not None and _want <= TODAY: continue     # still genuinely due today
+            _st[_k] = {k: v for k, v in _e.items()
+                       if k not in ("pending_approval", "approve_token", "pending_since",
+                                    "flag_approval_sent")}
+            d["cue_state"] = _st
+            _redated += 1
+            if SEND: _save_cue(cur, d["id"], _st, _k)
+    if _redated:
+        print("re-dated %d queued fun-action email(s) - show date moved" % _redated)
 
     due=[]; blocked_today=[]; new_blocks=[]; held_new=[]
     for d in deals:
