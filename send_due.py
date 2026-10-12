@@ -1181,6 +1181,16 @@ def main():
         contact = CB.get(d.get("primary_contact_id")) or {}
         for key, e in list(st.items()):
             if not isinstance(e, dict) or not e.get("send_now"): continue
+            # Scheduled-for-later (approve-email.js sets send_after when approving a delayed send).
+            # MIRRORS the identical guard in BOTH of run-due.js's send_now loops. Without it this
+            # engine sends a deferred email on its very next sweep and the delay means nothing.
+            if e.get("send_after"):
+                try:
+                    _sa = datetime.datetime.fromisoformat(str(e["send_after"]).replace("Z", "+00:00"))
+                    if _sa.tzinfo is None: _sa = _sa.replace(tzinfo=datetime.timezone.utc)
+                    if datetime.datetime.now(datetime.timezone.utc) < _sa: continue
+                except Exception:
+                    pass        # unparseable -> treat as due rather than stranding the email forever
             if e.get("sent") or e.get("cancelled"): continue
             # Respect an in-flight claim from the instant send-now endpoint (avoid a sweep-vs-instant double-send).
             # A claim older than 5 min is stale (a crashed sender) and fair game again.
@@ -1211,7 +1221,12 @@ def main():
         print(f"  -> [now] {to}{('  cc:'+str(cc)) if cc else ''}  |  [{key}]  {subj[:70]}{'  [no-safe]' if no_safe else ''}")
         if SEND:
             if _claim_dispatch(cur, d["id"], (st.get(key) or {}).get("dispatch_id") or key):
-                atts = attachments.attachments_for("deposit_receipt", d, contact) if key.startswith("_depreceipt_") else []
+                # The entry's own `attach` (set when it was held for approval) decides the PDF, so a
+                # send_now routed through THIS engine keeps it. Was receipts-only, which would have
+                # sent the Magic Castle invite with no invitation attached the moment that email
+                # started going through send_now. attachments_for() already knows 'magic_castle'.
+                _att_key = "deposit_receipt" if key.startswith("_depreceipt_") else (e.get("attach") or "")
+                atts = attachments.attachments_for(_att_key, d, contact) if _att_key else []
                 mailer.send_email(to, subj, body, owner=no_safe, attachments=atts, cc=cc)
             else:
                 print("     (already dispatched by the instant channel - skipping)")
@@ -1295,7 +1310,12 @@ def main():
     if SEND and gcal_due: print("gcal reminders sent.")
 
     # ---- Magic Castle invite: ONE per deal (shared marker cue_state['magic_castle']). Closed-Won version
-    #      fires at Closed Won (priority); deposit version ~10 min after the deposit is marked paid. Whichever
+    #      fires at Closed Won (priority); deposit version the moment the deposit is marked paid. Whichever
+    #      WAS: the deposit version waited MC_SEND_DELAY_MIN after `deposit_paid_at` before it even
+    #      appeared in the approval queue (Simon 2026-10-13: "instead of having a buffer for it
+    #      entering the cue, have it enter immediately"). That wait did not disappear - it MOVED to
+    #      after approval, so the button reads "Approve and send in 10 minutes" and the send is
+    #      scheduled rather than immediate. See MC_SEND_DELAY_MIN / approve-email.js.
     #      fires first claims the marker; the other is suppressed. It HOLDS for Simon's approval (never
     #      auto-sends); the PDF is attached when he Approves (attach:'magic_castle'). One authorize email per
     #      deal (only when it first holds - pending_approval guards re-alerts). ----
@@ -1316,8 +1336,8 @@ def main():
             _p = d.get("deposit_paid_at"); paid = None
             if isinstance(_p, datetime.datetime):
                 paid = _p if _p.tzinfo else _p.replace(tzinfo=datetime.timezone.utc)
-            if d.get("deposit_status")=="paid" and paid and _now >= paid + datetime.timedelta(minutes=10) and paid.date() >= SEQ_START:
-                version = "magic_castle"                           # deposit version, ~10 min after paid
+            if d.get("deposit_status")=="paid" and paid and paid.date() >= SEQ_START:
+                version = "magic_castle"                           # deposit version, the moment the deposit is paid
         if not version: continue
         t = TPL.get(version)
         if not t: continue
