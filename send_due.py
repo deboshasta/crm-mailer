@@ -307,9 +307,16 @@ def _double_check_btn(d):
             'font-weight:bold;padding:10px 20px;border-radius:8px;margin:0 8px 10px 0">&#128269; DOUBLE CHECK DATE</a>'
             % html.escape(link))
 
+def _gcal_event_url(d):
+    """deals.gcal_url ONLY when it is a real link. Confirming "it's on my calendar" stores a marker
+    there instead (see GCAL_CONFIRMED / _gcalEventUrl in app.js): every CONDITION on the column still
+    reads it as "handled", but nothing may put it in an href. MIRROR of app.js's _gcalEventUrl."""
+    v = str(d.get("gcal_url") or "").strip()
+    return v if re.match(r"^https?://", v, re.I) else ""
+
 def gcal_link(d, V):
     """The calendar link for a deal: the SAVED event URL once Simon has stored it, else the add-event link."""
-    if d.get("gcal_url"): return d["gcal_url"]                 # saved event URL wins for every gcal link
+    if _gcal_event_url(d): return _gcal_event_url(d)           # a real saved event URL wins for every gcal link
     sd=_d(d.get("show_date"))
     if not sd: return ""
     who=V.get("ClientFullName") or d.get("deal_name") or "Gig"
@@ -364,7 +371,7 @@ def _gcal_email_html(d, V, token, reminder):
     who = V.get("ClientFullName") or d.get("deal_name") or "this booking"
     when = V.get("ShowDate") or (str(d.get("show_date")) if d.get("show_date") else "TBD")
     stime = (d.get("show_time") or "").strip()
-    link = d.get("gcal_url") or _gcal_day_link(d)   # saved event URL wins, else the custom-day link
+    link = _gcal_event_url(d) or _gcal_day_link(d)  # real saved event URL wins, else STEP 1's day view
     paste = "%s?t=%s" % (GCAL_PASTE_BASE, token)
     b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
     if reminder:
