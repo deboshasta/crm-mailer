@@ -171,6 +171,47 @@ CUE = [
 ]
 AUTO_MODES = ("auto",)   # 'window' mode retired -> folded into 'auto' (they always behaved identically)
 
+# ---- Client replied -> pause the chase (brief gig-workflow R4, 2026-10-19) -------------------
+# The scheduled Claude task on Simon's PC stamps deals.last_client_reply_at when a client email
+# arrives. A pre-call chase or proposal follow-up that comes due AFTER such a reply must not go out
+# on its own: the client is talking to Simon, and "just following up!" on top of their answer reads
+# badly. It turns into FLAG instead (approval request + approval queue, nothing auto-sent).
+# "After a reply" = the reply is newer than the LATEST of: the deal's stage entry, and the newest
+# email this ladder actually sent. So once Simon sends a follow-up after the reply (approving a
+# flagged one), the ladder is back on auto until the client writes again.
+# Booking / post-show / everything else is untouched. Mirrored in app.js dealSchedule (replyFlag).
+REPLY_PAUSE_LADDERS = (
+    ("precall_fu1", "precall_fu2", "precall_abcde", "precall_shark", "precall_breakup"),
+    ("pf_fu1", "pf_abcde", "pf_shark", "pf_breakup"),
+)
+def _ts(v):
+    """timestamptz / ISO text / plain date -> aware UTC datetime (a bare date counts as its start)."""
+    if not v: return None
+    if isinstance(v, datetime.datetime):
+        return v if v.tzinfo else v.replace(tzinfo=datetime.timezone.utc)
+    if isinstance(v, datetime.date):
+        return datetime.datetime(v.year, v.month, v.day, tzinfo=datetime.timezone.utc)
+    t = str(v).strip().replace("Z", "+00:00")
+    try:
+        x = datetime.datetime.fromisoformat(t)
+    except ValueError:
+        try: x = datetime.datetime.fromisoformat(t[:10])
+        except ValueError: return None
+    return x if x.tzinfo else x.replace(tzinfo=datetime.timezone.utc)
+
+def _client_replied(key, d, st):
+    ladder = next((ks for ks in REPLY_PAUSE_LADDERS if key in ks), None)
+    if not ladder: return False
+    rep = _ts(d.get("last_client_reply_at"))
+    if not rep: return False
+    marks = [_ts(d.get("stage_changed_at"))]
+    for k in ladder:
+        e = st.get(k) or {}
+        if isinstance(e, dict) and e.get("sent"):
+            marks.append(_ts(e.get("sent_at") or e.get("sent")))
+    marks = [m for m in marks if m]
+    return (rep > max(marks)) if marks else True
+
 def _flag_suppressed(key, d):
     """A FLAG email that should NOT surface at all (mirror of the app's showIf guards), so we never send
     Simon an approval request for it. (customization_request is also guarded in the loop.)"""
@@ -813,7 +854,8 @@ def main():
             "event_type","is_repeat","customize_token","trivia","trivia_received_at","trivia_notified_at",
             "performer_id","commission_amount","proposal_sent_at","photos_received_at","photos_notified_at",
             "deal_name","cue_state","stage_changed_at","created_at","primary_contact_id","gcal_url",
-            "deposit_status","deposit_paid_at","require_trivia","send_stage_intro","photo_goh_limit","photo_guest_limit"]
+            "deposit_status","deposit_paid_at","require_trivia","send_stage_intro","photo_goh_limit","photo_guest_limit",
+            "last_client_reply_at"]
     # EGRESS: fetch only deals this run can act on (was: all 512 rows incl. every cue_state, ~1MB/run).
     # Kept sets (mirror every pass below — update BOTH when adding a pass):
     #   * CUE stages (incl. gcal/w9/gig check-ins/magic-castle-cw subsets of these)
@@ -986,6 +1028,9 @@ def main():
             if key in ("refer_won_daybefore","refer_won_after") and not d.get("performer_id"): continue
             # repeat clients: post-show emails become FLAG/manual (don't auto-send the same note yearly)
             eff = "flag" if (d.get("is_repeat") and (anchor=="after_thank_you" or (anchor=="show" and off>0))) else mode
+            # R4: the client replied -> a pre-call chase / proposal follow-up becomes FLAG (never auto-sent)
+            _replied = _client_replied(key, d, st)
+            if _replied: eff = "flag"
             if eff not in AUTO_MODES:
                 # FLAG emails are never auto-sent. But from 7am ET on their due date we send Simon ONE approval
                 # request (Approve / Edit / Cancel) so flagged emails ALSO route through his inbox. This is
@@ -1019,6 +1064,8 @@ def main():
                                            "pending_since": ef.get("pending_since") or TODAY.isoformat()}
                                 held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key,
                                                  contact["email"], subjf, hbodyf, tokf, d["id"],
+                                                 ("The client replied (%s) - this follow-up is paused instead of sending itself. Send it only if it still fits, or Cancel to drop it." % str(d.get("last_client_reply_at"))[:10])
+                                                 if _replied else
                                                  "Flagged email - you normally send these by hand. Use Preview & Send to review and send it, or Cancel to drop it."))
                                 if SEND:
                                     _save_cue(cur, d["id"], st, key)
