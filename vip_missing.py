@@ -78,6 +78,16 @@ def main():
         photos_req = (_numlim(d.get("photo_goh_limit")) > 0 or _numlim(d.get("photo_guest_limit")) > 0)
         trivia_out = trivia_req and not d.get("trivia_done_at")     # requested & not done by Simon
         photos_out = photos_req and not d.get("photos_done_at")
+        # "Stop reminding me about pictures" on this deal (cue_state._custwaive.photos, Simon
+        # 2026-10-23). BOTH flags are cleared, not just _out: leaving photos_req true would keep
+        # printing a "requested / NOT done" row in an email that is no longer about pictures.
+        # A deal whose TRIVIA is still outstanding still gets its email - this silences one half.
+        # Unlike _custsnooze below this has no expiry and no 4-day floor, because it means the
+        # pictures are not happening for this gig at all. Keep it in step with custOutstanding()
+        # in app.js and the customizations counter in approve_counts.sql.
+        if ((d.get("cue_state") or {}).get("_custwaive") or {}).get("photos"):
+            photos_req = False
+            photos_out = False
         if not (trivia_out or photos_out):
             continue
         # Snoozed from the CRM (cue_state._custsnooze.until). Muting the board but still mailing
