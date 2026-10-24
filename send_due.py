@@ -251,7 +251,21 @@ def _flag_suppressed(key, d):
                          and not d.get("photos_received_at"))
         if not (trivia_needed or photos_needed):
             return True
+        # A show that has already HAPPENED is never chased, and never re-asked. The ask carries
+        # this guard inside _cr_send_date; the chases are plain show-14 / show-10 anchors, so for a
+        # past show BOTH dates are in the past and both came due on the very first sweep.
+        # Measured 2026-10-24, the day this shipped: 20 chases queued, 18 of them for shows already
+        # gone, the oldest three months back. Flag mode held every one in the approval queue so no
+        # client was written to - but that is the safety net working, not the guard.
+        show = _d(d.get("show_date"))
+        if not show or show < TODAY:
+            return True
         if key != "customization_request":
+            # Inside 10 days BOTH chase dates have passed, so both would queue on the same sweep and
+            # Simon would be approving two near-identical notes to one client on one day. Once the
+            # last call is due, it is the only one that goes.
+            if key == "customization_chase_1" and show - datetime.timedelta(days=10) <= TODAY:
+                return True
             # A CHASE only makes sense once the original ask actually went out. If it is still
             # sitting in the approval queue, chasing would hand Simon two near-identical emails to
             # approve; if he cancelled it, he decided not to ask this client at all. Either way the
