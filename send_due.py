@@ -152,6 +152,11 @@ CUE = [
     # 226-day silence that ran from here to rebook (+240). ⚠️ Mirrored in app.js's CUE table.
     ("popped_into","show",90,"flag",("closed_won",)),
     ("rebook","show",240,"flag",("closed_won",)),
+    # The family-worded twin. BOTH templates have always existed and differ on purpose -- rebook
+    # says "your group", rebook_family says "your family" -- and app.js's CUE mirror has always
+    # gated them on event_type. The ENGINE never had the split, so every family client was sent the
+    # corporate wording while the board showed them the family one. Gated in _flag_suppressed.
+    ("rebook_family","show",240,"flag",("closed_won",)),
     # flag, not auto (Simon 2026-09-20): these chase a live prospect mid-negotiation, so each one
     # routes through the approval request instead of sending itself. Mirrored in app.js's CUE table.
     ("pf_fu1","proposal_sent",3,"flag",("proposal_sent",)),
@@ -243,6 +248,11 @@ def _flag_suppressed(key, d):
         try: bal = float(d.get("balance_amount") or 0)
         except (TypeError, ValueError): bal = 0.0
         return bal <= 0 or d.get("balance_status") in ("paid", "not_required")
+    if key in ("rebook", "rebook_family"):
+        # Exactly one of the pair goes, decided by event_type. Mirrors the showIf gates that app.js
+        # has always had on these two; the engine simply never implemented its half.
+        is_family = (d.get("event_type") == "family")
+        return is_family if key == "rebook" else (not is_family)
     if key == "stage_intro":
         return not d.get("send_stage_intro")
     if key in CUST_ASK_KEYS:
