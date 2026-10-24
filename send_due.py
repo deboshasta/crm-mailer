@@ -13,6 +13,10 @@ import heartbeat
 
 SEND = "--send" in sys.argv
 TODAY = tz.today()          # Eastern "today" so cloud (UTC) runs match Simon's local day
+# ⚠ UTC, deliberately, and only used for the Pie Control hold (step 3). TODAY is Eastern because it
+# is compared against stored DATES; the hold is a DURATION in minutes, so it needs an unambiguous
+# instant — and pie_ack.seen_at is timestamptz. Mixing the two is how an hour becomes five.
+NOW_UTC = datetime.datetime.now(datetime.timezone.utc)
 
 def _now_iso():
     """Absolute send instant (UTC, with offset) stored alongside the 'sent' date so the app can show
@@ -913,6 +917,94 @@ def anchor_date(deal, anchor, stages):
         return None
     return None
 
+
+# ─── PIE CONTROL STEP 3: hold the authorize email back while the phone bubble is unseen ──────────
+# briefs/pie-control-queue.md step 3. Simon's choice: approvals get ONE HOUR, because an approval
+# costs a send window (the 9am-9pm client cadence means a late one can slip a whole day).
+#
+# ⚠⚠ THIS IS THE FIRST STEP THAT CAN LOSE AN EMAIL, so every uncertainty below resolves to
+#    "send it anyway". Read the three guards as one rule: suppress ONLY when the switch is on AND
+#    the feed answered AND that exact item is recorded as seen.
+# ⚠⚠ IT SHIPS SWITCHED OFF. private.config 'pie_suppress_approvals' must be set to 'on' by hand,
+#    and it should NOT be until Pie Control actually acks - with nothing acking, turning it on only
+#    delays every approval email by an hour and suppresses nothing. The row is also the kill switch:
+#    setting it to anything else takes effect on the next sweep with no deploy.
+PIE_APPROVAL_HOLD_MIN = 60
+
+# ⚠⚠ THESE TWO KEYS DESCRIBE ONE QUEUEING EPISODE AND MUST BE STRIPPED WHEREVER THE APPROVAL KEYS
+# ARE. An entry can be unqueued and re-queued under the same key (guest_excited re-dates on a moved
+# show; date_override pushes one out), and today that re-queueing earns a FRESH authorize email. If
+# approval_email_sent survived the unqueue, the catch-up pass below would see the new episode as
+# already announced and the email would never go out at all.
+_PIE_EPISODE_KEYS = ("approval_queued_at", "approval_email_sent")
+
+
+def _pie_suppress_on(cur):
+    """Is step-3 suppression switched on? Defaults OFF and FAILS OFF - any error, missing row or
+    unrecognised value means every approval emails exactly as it did before step 3 existed."""
+    try:
+        cur.execute("select value from private.config where key='pie_suppress_approvals'")
+        row = cur.fetchone()
+        return bool(row and str(row[0]).strip().lower() in ("on", "true", "1", "yes"))
+    except Exception as e:
+        print("pie: could not read pie_suppress_approvals - suppressing nothing:", e)
+        return False
+
+
+def _pie_seen_map(cur):
+    """{item_id: seen_at} straight from public.pie_approvals().
+
+    ⚠⚠ IT CALLS THE FEED'S OWN FUNCTION RATHER THAN RE-DERIVING ANYTHING. A second
+       "does a pie_ack row exist" test here is the one mistake that matters: seen_at is
+       EPISODE-SCOPED (an entry can be unqueued and re-queued under the same key - guest_excited
+       re-dates on a moved show), so a bare existence test would let the ack from a previous
+       queueing suppress this one's email permanently and silently.
+    ⚠ Returns None when the feed cannot be read, and every caller must treat None as
+      "suppress nothing". That is also what makes the service_role-only grant a non-issue: if this
+      connection's role cannot execute the function, approvals simply email as before."""
+    try:
+        cur.execute("select public.pie_approvals()")
+        feed = cur.fetchone()[0] or []
+        if isinstance(feed, str):
+            feed = json.loads(feed)
+        return {i["id"]: i.get("seen_at") for i in feed if isinstance(i, dict) and i.get("id")}
+    except Exception as e:
+        print("pie: could not read the approvals feed - suppressing nothing this sweep:", e)
+        return None
+
+
+def _pie_item_id(deal_id, key):
+    """Must match pie_approvals()' own id expression exactly, or nothing can ever be matched."""
+    return "appr_%s_%s" % (deal_id, key)
+
+
+def _pie_hold_decision(deal_id, key, entry, pie_on, seen_map, now_utc):
+    """Should the authorize email for this held entry be SENT right now?
+
+    Returns (send_now: bool, why: str). Called both at queue time and by the catch-up pass, so the
+    two can never disagree about an item."""
+    if not pie_on or seen_map is None:
+        return True, "suppression off"
+    item = _pie_item_id(deal_id, key)
+    if item not in seen_map:
+        # Not in the feed => not pending any more, or snoozed. Nothing to announce either way.
+        return False, "not pending (approved, cancelled or snoozed)"
+    if seen_map.get(item):
+        return False, "seen on the phone at %s" % seen_map[item]
+    q = entry.get("approval_queued_at")
+    if not q:
+        return True, "no approval_queued_at - cannot time the hold, so send"
+    try:
+        qt = datetime.datetime.strptime(str(q)[:19], "%Y-%m-%dT%H:%M:%S").replace(
+            tzinfo=datetime.timezone.utc)
+    except Exception:
+        return True, "unparseable approval_queued_at %r - send" % q
+    age_min = (now_utc - qt).total_seconds() / 60.0
+    if age_min < PIE_APPROVAL_HOLD_MIN:
+        return False, "unseen but only %.0f min old (hold is %d)" % (age_min, PIE_APPROVAL_HOLD_MIN)
+    return True, "unseen after %.0f min" % age_min
+
+
 def main():
     c=connect(); c.autocommit=True; cur=c.cursor()
     # PHASE-1 RESILIENCE: never let one bad send crash the whole run. Every mailer.send_email goes through a
@@ -1091,7 +1183,7 @@ def main():
             if _want is not None and _want <= TODAY: continue     # still genuinely due today
             _st[_k] = {k: v for k, v in _e.items()
                        if k not in ("pending_approval", "approve_token", "pending_since",
-                                    "flag_approval_sent")}
+                                    "flag_approval_sent") + _PIE_EPISODE_KEYS}
             d["cue_state"] = _st
             _redated += 1
             if SEND: _save_cue(cur, d["id"], _st, _k)
@@ -1144,6 +1236,8 @@ def main():
                                 st[key] = {**ef, "pending_approval": True, "approve_token": tokf,
                                            "to": contact["email"], "subject": subjf, "body": hbodyf,
                                            "flag_approval_sent": TODAY.isoformat(),
+                                           # step 3: the clock the one-hour phone hold is measured from
+                                           "approval_queued_at": NOW_UTC.isoformat(timespec="seconds").replace("+00:00", "Z"),
                                            "pending_since": ef.get("pending_since") or TODAY.isoformat()}
                                 held_new.append((contact.get("full_name") or d.get("deal_name") or "deal", key,
                                                  contact["email"], subjf, hbodyf, tokf, d["id"],
@@ -1176,7 +1270,7 @@ def main():
                     if _ov_pre_date > TODAY:
                         if e.get("pending_approval") or e.get("pending_since") or e.get("approve_token"):
                             st[key] = {k: v for k, v in e.items()
-                                       if k not in ("pending_approval", "pending_since", "approve_token")}
+                                       if k not in ("pending_approval", "pending_since", "approve_token") + _PIE_EPISODE_KEYS}
                             if SEND:
                                 _save_cue(cur, d["id"], st, key)
                                 print(f"  [hard-exit] {d['id'][:8]} {key}: cleared stale approval fields (date_override={_ov_pre})")
@@ -1202,7 +1296,8 @@ def main():
                 if _ov_date and _ov_date > TODAY:
                     _needs_clean = e.get("pending_approval") or e.get("pending_since")
                     if _needs_clean:
-                        st[key] = {k: v for k, v in e.items() if k not in ("pending_approval", "pending_since")}
+                        st[key] = {k: v for k, v in e.items()
+                                   if k not in ("pending_approval", "pending_since") + _PIE_EPISODE_KEYS}
                         if SEND:
                             _save_cue(cur, d["id"], st, key)
                             print(f"    -> cleared stale pending_approval for {key} (date_override={_ov})")
@@ -1237,7 +1332,8 @@ def main():
                 if _ov_date and _ov_date > TODAY:
                     _needs_clean = e.get("pending_approval") or e.get("pending_since")
                     if _needs_clean:
-                        st[key] = {k: v for k, v in e.items() if k not in ("pending_approval", "pending_since")}
+                        st[key] = {k: v for k, v in e.items()
+                                   if k not in ("pending_approval", "pending_since") + _PIE_EPISODE_KEYS}
                         if SEND:
                             _save_cue(cur, d["id"], st, key)
                     continue
@@ -1253,6 +1349,11 @@ def main():
                 new_entry = {**e, "pending_approval": True, "approve_token": token,
                              "to": contact.get("email") or "",
                              "subject": subj, "body": hbody,
+                             # step 3: the clock the one-hour phone hold is measured from. `or` and
+                             # not a plain set: this block re-runs every sweep for an entry that is
+                             # ALREADY pending, and restamping it would restart the hold each time.
+                             "approval_queued_at": e.get("approval_queued_at")
+                                                   or NOW_UTC.isoformat(timespec="seconds").replace("+00:00", "Z"),
                              "pending_since": e.get("pending_since") or TODAY.isoformat()}
                 if _missing:
                     new_entry["missing_fields"] = _missing
@@ -1300,15 +1401,31 @@ def main():
             mailer.send_email("simon@thesimonshow.com",
                               f"{len(new_blocks)} email(s) paused - missing info",
                               _blocked_alert_html(new_blocks))
+    # PIE CONTROL STEP 3: read the switch and the feed ONCE for the whole sweep. Both fail safe -
+    # off, or unreadable, means every authorize email goes out exactly as it did before step 3.
+    _pie_on = _pie_suppress_on(cur)
+    _pie_seen = _pie_seen_map(cur) if _pie_on else None
+    if _pie_on and _pie_seen is None:
+        _pie_on = False                       # feed unreadable -> announce everything
+    if _pie_on:
+        print("pie: suppression ON (hold %d min); %d item(s) in the feed, %d already seen"
+              % (PIE_APPROVAL_HOLD_MIN, len(_pie_seen),
+                 sum(1 for v in _pie_seen.values() if v)))
+
+    # ⚠⚠ THE AUTHORIZE EMAILS ARE NO LONGER SENT HERE (step 3). This loop only logs what was newly
+    #    held and carries each item's optional plain-language note across to the single pass below,
+    #    which is now the ONE place an authorize email is sent and the ONE place
+    #    approval_email_sent is stamped. Sending from two places is how "already announced?" and
+    #    "announce it" start to disagree, and the failure mode is a client email nobody is told
+    #    about. With suppression OFF the pass runs in this same sweep, so the timing is unchanged.
+    _pie_notes = {}
     if held_new:
-        print(f"{TODAY}  -  {len(held_new)} email(s) HELD for approval -> individual authorize emails to Simon")
+        print(f"{TODAY}  -  {len(held_new)} email(s) newly HELD for approval")
         for row in held_new:
             nm,key,to,subj,body,token,did = row[:7]
             print(f"  -> [held] {to}  |  [{key}]  {subj[:60]}")
-            if SEND:
-                mailer.send_email("simon@thesimonshow.com",
-                                  f"Approval for {nm}: {subj}",
-                                  _authorize_email_html([row]), owner=True)   # one authorize email per held email
+            if len(row) > 7 and row[7]:
+                _pie_notes[(str(did), key)] = row[7]
         # PIE CONTROL DOORBELL (step 2, 2026-10-24, briefs/pie-control-queue.md). Pie Control polls
         # the ?a=piefeed feed every 30 min; this says "poll NOW" so a new approval reaches the phone
         # in seconds instead of up to half an hour.
@@ -1334,6 +1451,67 @@ def main():
                           c)
             except Exception as _jx:
                 print("pie doorbell failed (harmless):", _jx)
+
+    # ---- AUTHORIZE EMAILS: the one place they are sent (Pie Control step 3) -------------------
+    # Walks every entry this script has queued for approval and not yet announced, and sends the
+    # authorize email unless the phone has it covered. With suppression OFF this runs in the same
+    # sweep that queued the item, so Simon's inbox behaves exactly as it did before step 3.
+    #
+    # ⚠⚠ SCOPE IS `approval_queued_at`, AND THAT IS WHAT KEEPS THIS NARROW. Only entries THIS
+    #    script queued carry it, so approvals created in the browser ("Send later", a stage popup,
+    #    _ctupd_) and by run-due.js are untouched - they never got an authorize email before and
+    #    they must not start getting one now. Entries queued before step 3 shipped have no stamp
+    #    either, and were already announced at the time.
+    # ⚠ magic_castle and w9_email send their own authorize emails at their own sites and are
+    #   deliberately NOT routed through here. Both are rare and individually consequential, so an
+    #   hour's delay costs more than the quieter inbox buys. If Simon wants them held too, they
+    #   each need an approval_queued_at stamp and their inline send removed - not a second copy of
+    #   this decision.
+    _auth_sent = _auth_held = 0
+    for d in deals:
+        st = d.get("cue_state") or {}
+        if isinstance(st, str): st = json.loads(st or "{}")
+        _changed = []
+        for key, e in list(st.items()):
+            if not isinstance(e, dict): continue
+            if not e.get("pending_approval"): continue
+            if e.get("sent") or e.get("cancelled"): continue
+            if not e.get("approval_queued_at"): continue        # not ours to announce
+            if e.get("approval_email_sent"): continue           # already announced this episode
+            contact = CB.get(d.get("primary_contact_id")) or {}
+            # ⚠ The client name, not deal_name - that column holds the client's phone, their email
+            #   and "(copy)" in practice, so it makes a log line unreadable. Resolved once here so
+            #   the hold line and the authorize line below name the deal the same way.
+            nm = contact.get("full_name") or d.get("deal_name") or "deal"
+            _send_now, _why = _pie_hold_decision(d["id"], key, e, _pie_on, _pie_seen, NOW_UTC)
+            if not _send_now:
+                _auth_held += 1
+                print(f"  -> [pie-hold] [{key}] {nm} - {_why}")
+                continue
+            subj = e.get("subject") or "(no subject)"
+            row = (nm, key, e.get("to") or "(no email)", subj, e.get("body") or "",
+                   e.get("approve_token") or "", d["id"])
+            _note = _pie_notes.get((str(d["id"]), key))
+            if _note:
+                row = row + (_note,)
+            print(f"  -> [authorize] [{key}] {nm}  ({_why})")
+            if SEND:
+                # ⚠ The stamp is written only AFTER the send returns. mailer.send_email goes through
+                #   the phase-1 resilience wrapper and records a failure rather than raising, so
+                #   stamping first would mark an email announced that never arrived - and nothing
+                #   would ever retry it.
+                mailer.send_email("simon@thesimonshow.com",
+                                  f"Approval for {nm}: {subj}",
+                                  _authorize_email_html([row]), owner=True)
+                st[key] = {**e, "approval_email_sent":
+                           NOW_UTC.isoformat(timespec="seconds").replace("+00:00", "Z")}
+                _changed.append(key)
+            _auth_sent += 1
+        if SEND and _changed:
+            _save_cue(cur, d["id"], st, *_changed)
+    if _auth_sent or _auth_held:
+        print("%s  -  authorize emails: %d sent, %d held back for the phone"
+              % (TODAY, _auth_sent, _auth_held))
 
     # ---- SEND NOW: emails the app flagged for immediate send (cue_state[key].send_now) ----
     # The "Send now" button in the CRM sets cue_state[key].send_now = true and kicks a run.
