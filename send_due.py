@@ -129,6 +129,8 @@ def perf_first_name(p):
 
 # (key, anchor, offset_days, mode, stages)
 CUE = [
+    # show-21 is now only the FLOOR: _cr_send_date brings this forward to TODAY while the show is
+    # still ahead, so the ask is queued as soon as customizations are required (Simon 2026-10-24).
     ("customization_request","show",-21,"flag",("closed_won",)),
     ("pre_show_2week","show",-14,"auto",("closed_won",)),
     ("pre_show_reminder","show",-3,"auto",("closed_won",)),
@@ -775,6 +777,30 @@ def _claim_dispatch(cur, deal_id, key):
 # approval cue immediately."
 GE_LEAD_DAYS = 10
 
+def _cr_send_date(d, anchored):
+    """When the customization ASK goes into the approval queue. Mirror of the app's _crDate.
+
+    Simon 2026-10-24: "if I require customizations for a job, I want the request for customizations
+    to enter the approval cue for approval immediately." It used to wait until show - 21, so a job
+    booked months out sat on the ask until three weeks before the date.
+
+    Returns TODAY while the show is still ahead, so the moment a deal is closed_won with trivia or
+    pictures outstanding the ask is queued on the next sweep. Otherwise the original show-21 date is
+    returned unchanged.
+
+    WARNING: the show-is-still-ahead guard is load-bearing, not tidiness. Without it a closed_won
+    show that has already HAPPENED, and whose trivia never arrived, would be handed a TODAY date and
+    queue "please send me your trivia" AFTER the event. show - 21 is in the past for those, which is
+    the behaviour they already had.
+
+    It is recomputed every sweep rather than stored, like _ge_send_date, so nothing has to be
+    migrated and moving the show date cannot strand it."""
+    show = _d(d.get("show_date"))
+    if show and show >= TODAY and anchored > TODAY:
+        return TODAY
+    return anchored
+
+
 def _ge_send_date(d, key):
     """Dynamic send date for the guest_excited split (mirror of the app's _geDates). Returns a date or None.
 
@@ -1079,6 +1105,8 @@ def main():
                 send_date = _ge_send_date(d, key)
                 if send_date is None:
                     continue
+            elif key == "customization_request":
+                send_date = _cr_send_date(d, send_date)
             e = st.get(key) or {}
             if e.get("sent") or e.get("cancelled"): continue
             # HARD EXIT: if date_override is a future date, skip immediately before computing send_date,
