@@ -186,9 +186,12 @@ def main():
             '<p style="color:#9aa0a6;font-size:12px;margin-top:12px">You get this at 6 weeks, 4 weeks, 10 days and '
             '7 days out, then every day until the show — until you mark each requested item done.</p></div>'
         )
-        if send and pie.item_id("cust", a["id"]) not in _pie_email:
-            # ⚠ The SMS goes with the email, not separately: both say the same thing, so letting
-            #   the text through while suppressing the mail would defeat the whole point.
+        # ⚠ Checked OUTSIDE `if send`, so a DRY RUN reports what it would really do. With it
+        #   inside, a suppressed item still printed "(dry-run) would email ..." - a dry run that
+        #   lies about the one decision being tested is worse than no dry run.
+        # ⚠ The SMS goes with the email, not separately: both say the same thing, so letting the
+        #   text through while suppressing the mail would defeat the whole point.
+        if pie.item_id("cust", a["id"]) not in _pie_email:
             print(f"  seen on the phone - not emailing or texting: {a['name']}")
             continue
         if send:
