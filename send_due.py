@@ -657,7 +657,7 @@ def merge_values(deal, contact):
         "ShowDateNoYear": (f"{WD[sd.weekday()]}, {MO[sd.month-1]} {_ord(sd.day)}" if sd else ""),
         "ShowDateShort": (f"{MO[sd.month-1][:3]} {sd.day}, {sd.year}" if sd else ""),
         "ShowDay": (WD[sd.weekday()] if sd else ""), "ShowTime": deal.get("show_time") or "",
-        "Venue": deal.get("venue_address") or "", "Occasion": deal.get("occasion") or "",
+        "Venue": deal.get("venue_address") or "", "Occasion": _strip_excl(deal.get("occasion")),
         "EventDetails": deal.get("audience_details") or "", "FormatDetails": deal.get("show_format") or "",
         "AppearanceFee": _num(deal.get("amount")), "DepositAmount": _num(deal.get("deposit_amount")),
         "BalanceAmount": _num(deal.get("balance_amount")),
@@ -708,6 +708,26 @@ def merge_values(deal, contact):
     V["_cond_balance_due_now"]     = _dep_amt > 0 and _app_fee > 0 and _dep_amt >= _app_fee and _dep_status not in ("paid", "not_required")
     V["_cond_balance_due_arrival"] = not V["_cond_balance_due_now"] and not _paid_full
     return V
+
+# The OCCASION loses its exclamation points when it is merged into email text (Simon 2026-10-24:
+# "keep them in the original variable, but get rid of the exclamation points when generating text
+# for the email"). He writes occasions like "Skypath Holiday Party!", and rebook / rebook_family
+# put the field MID-SENTENCE - "It's been a while since {{Occasion}}, and you popped into my
+# head." - which rendered "...since Skypath Holiday Party!, and you popped...".
+#
+# ⚠⚠ THE COLUMN IS NOT TOUCHED. deals.occasion keeps its exclamation points, and the drawer and
+#    the merge-field editor still show and save them - mailFieldOpen prefills from deal[col], not
+#    from the rendered span, so editing an Occasion through a document cannot strip them either.
+# ⚠ Applied at the MERGE SITE, not per template: the two rebook templates are simply where it
+#   reads worst, and any future template that puts the occasion mid-sentence inherits the fix.
+# ⚠ ALL of them, not just a trailing one - "Wow! Big Party" reads no better mid-sentence - then
+#   whitespace is collapsed so "Party ! Two" cannot leave a double space behind.
+# ⚠ _fix_end_punct still exists and is still needed: it guards every OTHER field that might end
+#   in "!", and a value Simon has typed straight into a held email body.
+# MIRRORED in web/app.js (stripExcl) and vercel-send/api/run-due.js (stripExcl) - all three build
+# merge values, so all three need it or the same email differs depending on who sent it.
+def _strip_excl(s):
+    return re.sub(r"\s+", " ", (s or "").replace("!", "")).strip()
 
 # Merge values can already END in an exclamation mark - Simon writes occasions like
 # "Intersession of camp!" - while templates put a period straight after the field
