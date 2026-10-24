@@ -132,6 +132,12 @@ CUE = [
     # show-21 is now only the FLOOR: _cr_send_date brings this forward to TODAY while the show is
     # still ahead, so the ask is queued as soon as customizations are required (Simon 2026-10-24).
     ("customization_request","show",-21,"flag",("closed_won",)),
+    # Client-side chases for anything still outstanding (Simon 2026-10-24: "i want them chased.
+    # ask again 14 days out, then 10 days out. only ask for items that are required but have not
+    # been sent"). Both reuse customization_request's conditional blocks, so each email carries
+    # ONLY the items still missing; _flag_suppressed drops them when nothing is outstanding.
+    ("customization_chase_1","show",-14,"flag",("closed_won",)),
+    ("customization_chase_2","show",-10,"flag",("closed_won",)),
     ("pre_show_2week","show",-14,"auto",("closed_won",)),
     ("pre_show_reminder","show",-3,"auto",("closed_won",)),
     ("stage_intro","show",-4,"flag",("closed_won",)),
@@ -214,6 +220,11 @@ def _client_replied(key, d, st):
     marks = [m for m in marks if m]
     return (rep > max(marks)) if marks else True
 
+# The customization ask and its two chases. One set, so the suppression rule cannot drift from
+# the CUE table. Mirrored by CUST_ASK_KEYS in app.js.
+CUST_ASK_KEYS = ("customization_request", "customization_chase_1", "customization_chase_2")
+
+
 def _flag_suppressed(key, d):
     """A FLAG email that should NOT surface at all (mirror of the app's showIf guards), so we never send
     Simon an approval request for it. (customization_request is also guarded in the loop.)"""
@@ -234,11 +245,27 @@ def _flag_suppressed(key, d):
         return bal <= 0 or d.get("balance_status") in ("paid", "not_required")
     if key == "stage_intro":
         return not d.get("send_stage_intro")
-    if key == "customization_request":
+    if key in CUST_ASK_KEYS:
         trivia_needed = (d.get("require_trivia") is not False) and not d.get("trivia_received_at")
         photos_needed = ((float(d.get("photo_goh_limit") or 0) > 0 or float(d.get("photo_guest_limit") or 0) > 0)
                          and not d.get("photos_received_at"))
-        return not (trivia_needed or photos_needed)
+        if not (trivia_needed or photos_needed):
+            return True
+        if key != "customization_request":
+            # A CHASE only makes sense once the original ask actually went out. If it is still
+            # sitting in the approval queue, chasing would hand Simon two near-identical emails to
+            # approve; if he cancelled it, he decided not to ask this client at all. Either way the
+            # thing to send is the ask, not a follow-up to an email the client never received.
+            st = d.get("cue_state") or {}
+            if isinstance(st, str):
+                try:
+                    st = json.loads(st or "{}")
+                except ValueError:
+                    st = {}
+            asked = st.get("customization_request")
+            if not (isinstance(asked, dict) and asked.get("sent")):
+                return True
+        return False
     return False
 
 # ---- Missing-field guard ---------------------------------------------------
@@ -632,9 +659,15 @@ def merge_values(deal, contact):
     V["PhotoLink"] = (f"{PHOTO_BASE}?t={deal.get('customize_token')}" if deal.get("customize_token") else "")
     V["PhotoGohLimit"] = (str(int(_goh)) if _goh > 0 else "")
     V["PhotoGuestLimit"] = (str(int(_guest)) if _guest > 0 else "")
-    V["_cond_photos_goh_only"]     = (_goh > 0 and _guest <= 0)
-    V["_cond_photos_both"]         = (_goh > 0 and _guest > 0)
-    V["_cond_photos_guests_only"]  = (_goh <= 0 and _guest > 0)
+    # Simon 2026-10-24: "only ask for items that are required but have not been sent."
+    # These three used to key on the LIMITS alone, so a deal whose photos had already arrived but
+    # whose trivia was still outstanding got an email asking for the photos all over again.
+    # `_cond_trivia` above has always carried the matching `not trivia_received_at`; this is the
+    # photo half of the same rule, and it is what lets the chase templates reuse these blocks.
+    _pics_out = not deal.get("photos_received_at")
+    V["_cond_photos_goh_only"]     = _pics_out and (_goh > 0 and _guest <= 0)
+    V["_cond_photos_both"]         = _pics_out and (_goh > 0 and _guest > 0)
+    V["_cond_photos_guests_only"]  = _pics_out and (_goh <= 0 and _guest > 0)
     V["_cond_deposit_unpaid"]      = bool(deal.get("deposit_amount")) and deal.get("deposit_status") != "paid"
     _dep_amt = float(deal.get("deposit_amount") or 0)
     _app_fee = float(deal.get("amount") or 0)
