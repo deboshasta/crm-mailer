@@ -1309,6 +1309,31 @@ def main():
                 mailer.send_email("simon@thesimonshow.com",
                                   f"Approval for {nm}: {subj}",
                                   _authorize_email_html([row]), owner=True)   # one authorize email per held email
+        # PIE CONTROL DOORBELL (step 2, 2026-10-24, briefs/pie-control-queue.md). Pie Control polls
+        # the ?a=piefeed feed every 30 min; this says "poll NOW" so a new approval reaches the phone
+        # in seconds instead of up to half an hour.
+        #
+        # ⚠⚠ THE PUSH CARRIES NO ITEM DATA, AND THAT IS THE WHOLE DESIGN - the same contract as the
+        #    CRM page's doorbell to the AHK watcher. The phone still asks the feed for the real
+        #    list, so a DUPLICATE push costs one cheap poll and a MISSED one costs nothing but the
+        #    normal 30-minute tick. Nothing parses the text; the count is there to be read by a
+        #    human, because Join renders it as an ordinary notification.
+        # ⚠ ONE push per sweep, not one per email: a sweep that holds three approvals rings once.
+        # ⚠ It is best-effort and deliberately swallowed. join.push() never raises, and an approval
+        #    must never fail to be HELD because a phone notification did not go out.
+        # ⚠ It fires only for approvals queued BY THIS SWEEP. Ones queued in the browser ("Send
+        #    later", a stage popup, _ctupd_) or by run-due.js (magic_castle) ring no bell and arrive
+        #    on the next poll - acceptable, because the feed is the source of truth and the bell is
+        #    only ever an optimisation.
+        if SEND:
+            try:
+                import join
+                _n = len(held_new)
+                join.push("CRM: approval waiting",
+                          "%d email%s waiting for approval - open Pie Control" % (_n, "" if _n == 1 else "s"),
+                          c)
+            except Exception as _jx:
+                print("pie doorbell failed (harmless):", _jx)
 
     # ---- SEND NOW: emails the app flagged for immediate send (cue_state[key].send_now) ----
     # The "Send now" button in the CRM sets cue_state[key].send_now = true and kicks a run.

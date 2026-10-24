@@ -83,6 +83,33 @@ def main():
 
     stamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     print("%s  feed=%d db=%d  %s" % (stamp, len(feed), len(rows), "AGREE" if agree else "DISAGREE"))
+
+    # ── ack health (step 2, briefs/pie-control-queue.md open risk 1) ─────────────────────────────
+    # ⚠⚠ REPORTED, NEVER ALERTED. The phone being off, away or asleep is normal, so an alert here
+    #    would fire most evenings - the same reasoning that keeps crm-suggest's last_suggest_run out
+    #    of heartbeat.py. This line exists so that when acks DO stop, the Actions log already says
+    #    when they stopped instead of the question starting from nothing.
+    # ⚠ `acked` is read from the FEED's own seen_at, which is episode-scoped in pie_approvals(). It
+    #   is deliberately NOT re-derived here: unlike the pending predicate (which this file restates
+    #   on purpose, so the comparison is independent), the episode rule has exactly one home and a
+    #   second copy would be a liability rather than a cross-check.
+    try:
+        n_acked = sum(1 for i in feed.values() if i.get("seen_at"))
+        cur.execute("select value from private.config where key='last_pie_ack'")
+        row = cur.fetchone()
+        if row and row[0]:
+            try:
+                t = datetime.datetime.strptime(str(row[0])[:19], "%Y-%m-%dT%H:%M:%S").replace(
+                    tzinfo=datetime.timezone.utc)
+                age_h = (datetime.datetime.now(datetime.timezone.utc) - t).total_seconds() / 3600.0
+                print("  acks: %d/%d items seen; last ack %.1fh ago (%s)" % (n_acked, len(feed), age_h, row[0]))
+            except Exception:
+                print("  acks: %d/%d items seen; last ack stamp unparseable: %r" % (n_acked, len(feed), row[0]))
+        else:
+            print("  acks: %d/%d items seen; NO ack has ever been recorded "
+                  "(expected until Pie Control's phone side is wired up)" % (n_acked, len(feed)))
+    except Exception as e:
+        print("  acks: could not read ack health: %s" % e)
     for i in only_feed:
         print("  ONLY IN FEED (would bubble something not in the queue): %s" % i)
     for i in only_db:
