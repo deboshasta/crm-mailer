@@ -28,14 +28,12 @@ deadline collapses into an ACK FRESHNESS WINDOW, sized to roughly one run of tha
 import datetime
 import json
 
-# Ack freshness per kind, in hours. The key is also the item-id prefix.
-WINDOW_H = {
-    "cust":     20,    # vip_missing.py        - daily (vip-missing.yml 13:00 UTC)
-    "blocked":  20,    # blocked_digest.py     - daily (blocked-digest.yml 13:00 UTC)
-    "likelyno": 10,    # likely_no_nag.py      - twice daily (nags.yml 12:00 + 18:00 UTC, 6h apart)
-    "deposit": 144,    # deposit_mailed_nag.py - weekly (deposit-mailed-nag.yml Mon 12:30 UTC)
-}
-
+# ⚠⚠ THE ACK WINDOWS USED TO LIVE HERE (WINDOW_H) AND DELIBERATELY NO LONGER DO.
+# They moved into public.pie_ack_window() in build/db/pie_items.sql the moment a third consumer
+# appeared: Pie Control on the phone also has to decide whether to bubble, and a window carried
+# here AND in SQL AND in Kotlin is three copies of one rule - the mistake the whole published/
+# derived split exists to avoid. pie_feed() now applies the window, so `seen_at` means HANDLED
+# RIGHT NOW and every consumer reduces to the same single test: is seen_at null?
 
 def _cur(db):
     """Accept a CONNECTION or a CURSOR, the way join.py does.
@@ -128,17 +126,17 @@ def unseen(db, kind, ids):
     try:
         if not suppress_on(cur):
             return set(ids)
-        hours = WINDOW_H.get(kind)
-        if not hours:
-            print("pie: no window configured for kind %r - emailing everything" % kind)
-            return set(ids)
-        cur.execute("""select item_id from public.pie_ack
-                        where item_id = any(%s) and seen_at > now() - (%s || ' hours')::interval""",
-                    (ids, str(hours)))
-        seen = {r[0] for r in cur.fetchall()}
+        # Read the feed, which has already applied each kind's window - so "handled" is decided
+        # in ONE place and this cannot drift from what the phone decided to bubble.
+        cur.execute("select public.pie_feed()")
+        feed = cur.fetchone()[0] or []
+        if isinstance(feed, str):
+            feed = json.loads(feed)
+        handled = {i["id"] for i in feed if isinstance(i, dict) and i.get("seen_at")}
+        seen = set(ids) & handled
         if seen:
-            print("pie: %d %s item(s) seen on the phone within %dh - not emailing those"
-                  % (len(seen), kind, hours))
+            print("pie: %d %s item(s) already seen on the phone - not emailing those"
+                  % (len(seen), kind))
         return set(ids) - seen
     except Exception as e:
         print("pie: unseen() failed for %s - emailing everything:" % kind, e)
