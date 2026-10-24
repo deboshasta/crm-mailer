@@ -51,6 +51,7 @@ jobs:
       DB_USER:      ${{ vars.DB_USER }}
       DB_PORT:      ${{ vars.DB_PORT }}
       JOIN_PUSH_BASE: ${{ secrets.JOIN_PUSH_BASE }}   # out-of-band phone push (roadmap #5); no-ops if unset
+      BAMFAM_FEED_KEY: ${{ secrets.BAMFAM_FEED_KEY }}  # read-only Pie Control feed key; shadow step no-ops if unset
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -67,6 +68,21 @@ jobs:
       #   run: python sms_due.py
       # Self-nags moved to nags.yml (2x/day) — they are once-a-day reminders and were
       # re-fetching all deals on every 20-min sweep.
+      # Pie Control feed shadow (step 1 of briefs/pie-control-queue.md). READ-ONLY: it compares
+      # ?a=piefeed against the approval queue computed from the database and alerts only if they
+      # disagree. It sends nothing and changes nothing.
+      #
+      # It rides THIS sweep rather than getting a schedule of its own, for the reason stated at the
+      # top of this file: GitHub's cron is unreliable, cron-job.org is the authoritative scheduler,
+      # and this job is already dispatched by it every 30 minutes. Riding it also means the check
+      # runs at the exact moment the queue changes - send_due.py above is what queues approvals.
+      #
+      # continue-on-error is LOAD-BEARING: a disagreement exits 1, and without this the mailer job
+      # would be marked failed and notify_fail.py would alert as though email had broken. The
+      # shadow is an observer; it must never be the thing that breaks the sweep.
+      - name: Pie Control feed shadow check
+        continue-on-error: true
+        run: python pie_shadow.py
       - name: Alert Simon on failure
         if: failure()
         env:
