@@ -7,6 +7,7 @@ leaves the stage. Dry-run by default; pass --send to actually send. Guarded to o
 import sys, json, html, datetime
 from db import connect
 import mailer
+import pie
 import tz
 
 SEND = "--send" in sys.argv
@@ -58,7 +59,7 @@ def main():
                 "d.customize_token "
                 "from deals d left join contacts ct on ct.id=d.primary_contact_id where d.stage='likely_no'")
     to="simon@thesimonshow.com"
-    due=[]
+    due=[]; standing=[]      # `standing` ignores the once-a-day guard - see below
     for (did, show_date, cue_state, who, cust_tok) in cur.fetchall():
         if FORCE_DEAL and str(did)!=FORCE_DEAL: continue
         sd=_d(show_date)
@@ -67,16 +68,37 @@ def main():
         if not FORCE_DEAL:
             if not sd: continue                                    # need a show date to know the window
             if (sd - TODAY).days > 4: continue                     # only once the show is <=4 days out
-            if (st.get(GUARD_KEY) or {}).get("pinged")==TODAY.isoformat(): continue   # once/day
         when=short_date(show_date)
         if sd:
             n=(sd-TODAY).days
             days_txt = "TODAY" if n==0 else ("tomorrow" if n==1 else (f"in {n} days" if n>0 else f"{-n} day(s) ago"))
         else:
             days_txt="(no show date set)"
+        # The phone's list is the STANDING condition, taken BEFORE the once-a-day guard: that
+        # guard is about not emailing twice in one day, not about the deal having stopped needing a
+        # decision. Publishing from `due` instead would delete the bubble a few hours after the
+        # morning email while the deal was still sitting in Likely No.
+        standing.append((did, who, days_txt))
+        if not FORCE_DEAL and (st.get(GUARD_KEY) or {}).get("pinged")==TODAY.isoformat():
+            continue                                               # already emailed today
         subj=f"Likely No - move {who} to Closed Lost? (show {when})"
         crm=f"{CRM_BASE}/?deal={did}"
         due.append((did, subj, body_html(who, when, days_txt, crm, cust_tok), st))
+    # ── PIE CONTROL (step 4) ──────────────────────────────────────────────────────────────────
+    # ⚠ `due` already has the once-a-day cue_state guard applied, so a deal he was nagged about
+    #   this morning is NOT in it - which means publishing from `due` would delete its bubble a few
+    #   hours later while the deal is still sitting in Likely No. The feed is therefore built from
+    #   `standing`: every likely_no deal inside the 4-day window, guard or no guard.
+    _pie = [{"id": pie.item_id("likelyno", did), "title": who, "deal_id": did,
+             "sub": "in Likely No - show %s" % days_txt,
+             "url": "%s/?deal=%s" % (CRM_BASE, did)} for (did, who, days_txt) in standing]
+    pie.publish(c, "likelyno", _pie)
+    _keep = pie.unseen(c, "likelyno", [pie.item_id("likelyno", d[0]) for d in due])
+    due = [t for t in due if pie.item_id("likelyno", t[0]) in _keep]
+    if SEND and _pie:
+        pie.doorbell(c, "CRM: Likely No deals", "%d deal%s in Likely No with the show close - open Pie Control"
+                     % (len(_pie), "" if len(_pie) == 1 else "s"))
+
     print(f"{TODAY}  -  {len(due)} likely-no nag(s) {'to SEND' if SEND else '(dry-run)'}{' [FORCED]' if FORCE_DEAL else ''}")
     for (did, subj, body, st) in due:
         print(f"  -> {subj[:80]}")

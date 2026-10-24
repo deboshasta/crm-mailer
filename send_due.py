@@ -960,15 +960,11 @@ _PIE_EPISODE_KEYS = ("approval_queued_at", "approval_email_sent")
 
 
 def _pie_suppress_on(cur):
-    """Is step-3 suppression switched on? Defaults OFF and FAILS OFF - any error, missing row or
-    unrecognised value means every approval emails exactly as it did before step 3 existed."""
-    try:
-        cur.execute("select value from private.config where key='pie_suppress_approvals'")
-        row = cur.fetchone()
-        return bool(row and str(row[0]).strip().lower() in ("on", "true", "1", "yes"))
-    except Exception as e:
-        print("pie: could not read pie_suppress_approvals - suppressing nothing:", e)
-        return False
+    """Is suppression switched on? Delegates to pie.suppress_on - ONE reader of that config row,
+    shared with the four owner-nags (step 4), so the switch cannot come to mean two things.
+    Defaults OFF and fails OFF."""
+    import pie
+    return pie.suppress_on(cur)
 
 
 def _pie_seen_map(cur):

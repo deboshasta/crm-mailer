@@ -16,6 +16,7 @@ Runs weekly from deposit-mailed-nag.yml. Dry-run by default; --send emails it.
 import sys, re, html, datetime
 from db import connect
 import mailer
+import pie
 
 CRM_BASE = "https://crm.thesimonshow.com"
 
@@ -67,15 +68,33 @@ def main():
           and coalesce(d.deposit_status::text,'') not in ('paid','not_required')
         order by dd.confirmed_at asc""")            # oldest (most overdue) first
     rows = cur.fetchall()
-    c.close()
+    # c stays OPEN: pie.publish/pie.unseen need it. Closed at every exit below.
 
     now = datetime.datetime.now(datetime.timezone.utc)
+    # ── PIE CONTROL (step 4) ──────────────────────────────────────────────────────────────────
+    # Published, not derived: the qualifying set is deposit_docs.confirmed_* against
+    # deposit_status, with ACH excluded and a 3-week staling rule.
+    # ⚠ WEEKLY, so pie.WINDOW_H["deposit"] is 6 DAYS. A 20-hour window like the daily nags
+    #   could never be fresh at the moment this script runs, and the suppression would do nothing.
+    # ⚠ r[4] is d.id and r[9] is contacts.full_name - read off the SELECT, not guessed. r[5]
+    #   (deal_name) is the FALLBACK only: in practice it holds the client's phone, their email and
+    #   "(copy)", which is the wrong thing to put on a phone bubble.
+    _pie = [{"id": pie.item_id("deposit", r[4]), "title": str(r[9] or r[5] or "Deal"),
+             "deal_id": r[4], "sub": "deposit still unpaid - client said %s" % (r[0] or "paid"),
+             "url": "%s/?deal=%s" % (CRM_BASE, r[4])} for r in rows]
+    pie.publish(c, "deposit", _pie)
+    _keep = pie.unseen(c, "deposit", [i["id"] for i in _pie])
+    rows = [r for r in rows if pie.item_id("deposit", r[4]) in _keep]
     print("%s: %d outstanding client-confirmed deposit(s)" % (datetime.date.today(), len(rows)))
     for r in rows:
         print("   %-26s %-7s confirmed %s" % (str(r[5])[:26], r[0], phrase(weeks_ago(r[2], now))))
     if not rows:
-        print("nothing outstanding - no nag sent.")
+        print("nothing outstanding - no nag sent (or all of them are on the phone already).")
+        c.close()
         return
+    if "--send" in sys.argv and _pie:
+        pie.doorbell(c, "CRM: deposits unpaid", "%d confirmed deposit%s still unpaid - open Pie Control"
+                     % (len(_pie), "" if len(_pie) == 1 else "s"))
 
     b = ['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
     b.append('<h2 style="margin:0 0 4px">Payments the client says are on the way</h2>')
@@ -143,6 +162,7 @@ def main():
         print("emailed nag ->", r["routed_to"])
     else:
         print("(dry-run; pass --send to email)")
+    c.close()
 
 
 if __name__ == "__main__":

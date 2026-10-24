@@ -9,6 +9,7 @@ Meant to run ONCE a day from its own workflow (blocked-digest.yml). Dry-run by d
 import sys, json, html, datetime
 from db import connect
 import send_due, mailer
+import pie
 
 TODAY = datetime.date.today()
 CRM_BASE = "https://crm.thesimonshow.com"
@@ -27,7 +28,7 @@ def main():
     send_due.PERF = {r[0]:{"first_name":r[1],"full_name":r[2]} for r in cur.fetchall()}
     cur.execute("select key,subject,body_html from templates where active=true")
     TPL = {r[0]:{"subject":r[1],"body":r[2]} for r in cur.fetchall()}
-    c.close()
+    # c stays OPEN: pie.publish/pie.unseen need it. Closed at every exit below.
 
     rows = []   # (client_name, key, [blanks], deal_id)
     for d in deals:
@@ -46,13 +47,33 @@ def main():
             rows.append((nm, key, blanks, d["id"]))
     rows.sort(key=lambda r: (r[0], r[1]))
 
+    # ── PIE CONTROL (step 4) ──────────────────────────────────────────────────────────────────
+    # Published, not derived: `blanks` comes from send_due.missing_fields(template, entry, merge
+    # values), which is template-aware and has no SQL equivalent.
+    # ⚠ One item per PAUSED EMAIL, not per deal - a deal can have two paused for different
+    #   reasons, and they are fixed separately.
+    _pie = [{"id": pie.item_id("blocked", did, key), "title": nm, "deal_id": did,
+             "sub": f"{key} paused - missing {', '.join(blanks)}",
+             "url": f"{CRM_BASE}/?deal={did}&fixemail={key}"} for (nm, key, blanks, did) in rows]
+    pie.publish(c, "blocked", _pie)
+    # ⚠⚠ THIS IS A DIGEST, so the gate FILTERS THE ROWS rather than deciding one send.
+    #    Anything already seen on the phone drops out of the email, and if every one of them has
+    #    been seen the email does not go at all - which is the behaviour that actually quietens
+    #    the inbox. A digest that still lists what he has already dealt with buys nothing.
+    _keep = pie.unseen(c, "blocked", [i["id"] for i in _pie])
+    rows = [r for r in rows if pie.item_id("blocked", r[3], r[1]) in _keep]
+
     print(f"{TODAY}: {len(rows)} paused email(s) waiting on missing fields")
     for nm, key, blanks, did in rows:
         print(f"  {nm[:26]:26s} [{key}] missing: {', '.join(blanks)}")
 
     if not rows:
-        print("nothing paused - no nag sent.")
+        print("nothing paused - no nag sent (or all of them are on the phone already).")
+        c.close()
         return
+    if "--send" in sys.argv and _pie:
+        pie.doorbell(c, "CRM: emails paused", "%d email%s paused for missing info - open Pie Control"
+                     % (len(_pie), "" if len(_pie) == 1 else "s"))
 
     b = ['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
     b.append('<h2 style="margin:0 0 4px">Emails paused - missing info</h2>')
@@ -76,6 +97,7 @@ def main():
         print("emailed nag ->", r["routed_to"])
     else:
         print("(dry-run; pass --send to email)")
+    c.close()
 
 if __name__ == "__main__":
     main()

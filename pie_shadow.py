@@ -66,7 +66,13 @@ def main():
         print("pie-shadow: BAMFAM_FEED_KEY is not set - cannot reach the feed")
         return 2                                  # not a disagreement; a setup problem
 
-    feed = {i["id"]: i for i in feed_items(key)}
+    # ⚠⚠ APPROVALS ONLY. As of step 4 the feed also carries cust / blocked / deposit /
+    #    likelyno / inquiry items, and the SQL below restates the APPROVAL predicate alone - so
+    #    without this filter every one of those would read as "only in feed" and the shadow would
+    #    alert on every single run, immediately and for ever. The other kinds need no shadow:
+    #    they are PUBLISHED by the very script that decides them, so there are no two copies to
+    #    drift apart, which is the whole thing this check exists to catch.
+    feed = {i["id"]: i for i in feed_items(key) if (i.get("kind") or "approval") == "approval"}
 
     conn = connect()
     cur = conn.cursor()

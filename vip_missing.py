@@ -29,6 +29,7 @@ import sys, html, datetime
 import tz
 from db import connect
 import send_due, mailer
+import pie
 
 TODAY = tz.today()
 # reminder days before the show: 6w, 4w, 10d, 7d, then daily 6..0. (set for O(1) lookup)
@@ -67,7 +68,7 @@ def main():
     CB = {r[0]: dict(zip(["id","first_name","last_name","full_name","email","phone_mobile","phone_other"], r))
           for r in cur.fetchall()}
     send_due.PERF = {}
-    c.close()
+    # c stays OPEN: pie.publish/pie.unseen need it. Closed at every exit below.
 
     alerts = []
     for d in deals:
@@ -115,13 +116,31 @@ def main():
         })
     alerts.sort(key=lambda a: (a["days"], a["name"]))
 
+    # ── PIE CONTROL (step 4) ──────────────────────────────────────────────────────────────────
+    # Published rather than derived: the qualifying set above is REMINDER_DAYS x snooze x waive x
+    # requested/received/done, and restating that in SQL would be a second rulebook.
+    # ⚠ Published even when `alerts` is EMPTY, and that is the important case - publish()
+    #   reconciles, so an empty set is what DELETES yesterday's bubbles. Returning early before
+    #   this would leave them on the phone for ever.
+    _pie = [{"id": pie.item_id("cust", a["id"]), "title": a["name"], "deal_id": a["id"],
+             "sub": "needs " + " and ".join([w for w, on in (("trivia", a["trivia_out"]),
+                                                             ("pictures", a["photos_out"])) if on])
+                    + (" - show TODAY" if a["days"] == 0 else " - show in %dd" % a["days"]),
+             "url": f"{CRM_BASE}/?deal={a['id']}"} for a in alerts]
+    pie.publish(c, "cust", _pie)
+    _pie_email = pie.unseen(c, "cust", [i["id"] for i in _pie])
+
     print(f"{TODAY}: {len(alerts)} VIP-customization DONE reminder(s) (closed_won, a reminder day, requested & not done)")
     for a in alerts:
         out = [w for w, on in (("trivia", a["trivia_out"]), ("photos", a["photos_out"])) if on]
         print(f"  {a['name'][:26]:26s} in {a['days']}d  to-do: {', '.join(out)}  {a['phone']}")
     if not alerts:
         print("nothing outstanding on a reminder day - no alerts sent.")
+        c.close()
         return
+    if send and _pie:
+        pie.doorbell(c, "CRM: customizations to do", "%d show%s need customizations - open Pie Control"
+                     % (len(_pie), "" if len(_pie) == 1 else "s"))
 
     def _status_row(label, requested, received, done):
         if not requested: return ""
@@ -167,6 +186,11 @@ def main():
             '<p style="color:#9aa0a6;font-size:12px;margin-top:12px">You get this at 6 weeks, 4 weeks, 10 days and '
             '7 days out, then every day until the show — until you mark each requested item done.</p></div>'
         )
+        if send and pie.item_id("cust", a["id"]) not in _pie_email:
+            # ⚠ The SMS goes with the email, not separately: both say the same thing, so letting
+            #   the text through while suppressing the mail would defeat the whole point.
+            print(f"  seen on the phone - not emailing or texting: {a['name']}")
+            continue
         if send:
             r = mailer.send_email(OWNER, subj, body, owner=True)
             note = "email " + r["routed_to"]
@@ -179,6 +203,7 @@ def main():
             print(f"  (dry-run) would email{' + text' if a['days'] <= URGENT_SMS_MAX_DAYS else ''}: {subj}")
     if not send:
         print("(dry-run; pass --send to email+text)")
+    c.close()
 
 if __name__ == "__main__":
     main()
