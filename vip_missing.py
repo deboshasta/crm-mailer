@@ -38,7 +38,7 @@ MAX_LOOKAHEAD = 42                                  # furthest reminder = 6 week
 URGENT_SMS_MAX_DAYS = 7                              # also text the phone within the final week
 CRM_BASE = "https://crm.thesimonshow.com"
 MARKDONE_BASE = "https://crm-send-the-simon-show.vercel.app/api/approve-email?a=markdone"  # folded into approve-email (Hobby 12-fn cap)
-SMS_ADDR = "7324926071@vtext.com"
+# (the Verizon SMS gateway is gone - replaced by a pie_alert bubble, 2026-10-25)
 OWNER = "simon@thesimonshow.com"
 
 def _numlim(x):
@@ -209,15 +209,32 @@ def main():
         if send:
             r = mailer.send_email(OWNER, subj, body, owner=True)
             note = "email " + r["routed_to"]
-            if a["days"] <= URGENT_SMS_MAX_DAYS:          # final week: also text the phone (no buttons — subject carries it)
-                sms = f"URGENT: still need to DO {todo_txt} for {a['name']} ({dsc}, {a['showdate']})."
-                mailer.send_email(SMS_ADDR, subj, sms, owner=True)
-                note += " + sms"
+            if a["days"] <= URGENT_SMS_MAX_DAYS:
+                # FINAL WEEK: a fire-once bubble instead of the Verizon SMS gateway (Simon
+                # 2026-10-25: "vtext is depreciated"). pie_alert() rings the phone, so it lands in
+                # about a second - which is what the text used to buy.
+                # !! THIS IS A SECOND BUBBLE ABOUT A DEAL THAT ALREADY HAS A `cust` ONE, and that
+                #    is the point: the standing bubble has been on screen for weeks by now and is
+                #    easy to stop seeing. The escalation was always meant to be louder than the
+                #    thing it escalates. It is `once`, so it does not come back once trashed.
+                # !! Keyed on the deal AND the show date, so the final week raises exactly one
+                #    bubble per gig however many times this runs.
+                # !! COMMIT: this script does NOT set autocommit (likely_no_nag does; they differ),
+                #    so without this the insert is rolled back when the connection closes and the
+                #    bubble silently never appears. pie.publish() commits its own writes, which is
+                #    why nothing noticed before.
+                cur.execute("select public.pie_alert(%s,%s,%s,%s)",
+                            ("vip_%s_%s" % (a["id"], a["showdate"]),
+                             "URGENT: %s" % a["name"],
+                             "still need to DO %s (%s, %s)" % (todo_txt, dsc, a["showdate"]),
+                             a["id"]))
+                c.commit()
+                note += " + bubble"
             print(f"  sent -> {a['name']}  ({note})")
         else:
-            print(f"  (dry-run) would email{' + text' if a['days'] <= URGENT_SMS_MAX_DAYS else ''}: {subj}")
+            print(f"  (dry-run) would email{' + bubble' if a['days'] <= URGENT_SMS_MAX_DAYS else ''}: {subj}")
     if not send:
-        print("(dry-run; pass --send to email+text)")
+        print("(dry-run; pass --send to email+bubble)")
     c.close()
 
 if __name__ == "__main__":

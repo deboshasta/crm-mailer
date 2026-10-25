@@ -204,10 +204,22 @@ def notify(ok, detail):
     try:
         import mailer
         if ok:
-            # SUCCESS -> text Simon rather than email. 7324926071@vtext.com is Verizon's email-to-SMS
-            # gateway, so a short plain message arrives as a text. No HTML (the gateway strips it) and
-            # no detail dump - a green "it worked" is all a success needs; details are in the Release.
-            mailer.send_email("7324926071@vtext.com", "CRM backup OK", "Backup succeeded %s" % STAMP)
+            # SUCCESS -> a Pie Control bubble, not a text (Simon 2026-10-25: "vtext is
+            # depreciated"). Details stay in the GitHub Release; this only says it ran.
+            # !! ONE BUBBLE PER DAY, BY DESIGN AND WORTH KNOWING: the id carries STAMP's date, so
+            #    a re-run on the same day cannot bubble twice - but a successful backup every
+            #    night does mean a bubble every night that Simon has to trash. If that turns out
+            #    to be noise, the right change is to drop this success notification entirely
+            #    rather than make it quieter: failure is already alerted separately, below and
+            #    through heartbeat.py, so nothing is lost by a silent success.
+            try:
+                import db as _db
+                _c = _db.connect(); _cur = _c.cursor()
+                _cur.execute("select public.pie_alert(%s,%s,%s)",
+                             ("backup_%s" % STAMP[:10], "CRM backup OK", "Backup succeeded %s" % STAMP))
+                _c.commit(); _c.close()
+            except Exception as _bx:
+                print("backup bubble failed (harmless):", _bx)
             return
         # FAILURE -> full email to Simon (unchanged), plus the phone push below.
         subj = "backup FAILED - %s" % STAMP
