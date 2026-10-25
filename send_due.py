@@ -140,6 +140,9 @@ CUE = [
     # ask again 14 days out, then 10 days out. only ask for items that are required but have not
     # been sent"). Both reuse customization_request's conditional blocks, so each email carries
     # ONLY the items still missing; _flag_suppressed drops them when nothing is outstanding.
+    # A gentler nudge at show-60, owed only to a gig booked far enough out that the ask promised
+    # one (see _flag_suppressed). ⚠️ Mirrored in app.js's CUE table.
+    ("customization_remind_60","show",-60,"flag",("closed_won",)),
     ("customization_chase_1","show",-14,"flag",("closed_won",)),
     ("customization_chase_2","show",-10,"flag",("closed_won",)),
     ("pre_show_2week","show",-14,"auto",("closed_won",)),
@@ -231,7 +234,11 @@ def _client_replied(key, d, st):
 
 # The customization ask and its two chases. One set, so the suppression rule cannot drift from
 # the CUE table. Mirrored by CUST_ASK_KEYS in app.js.
-CUST_ASK_KEYS = ("customization_request", "customization_chase_1", "customization_chase_2")
+CUST_ASK_KEYS = ("customization_request", "customization_remind_60",
+                 "customization_chase_1", "customization_chase_2")
+# How far out a show has to be for the ask to carry the "I'll nudge you nearer the date" wording,
+# and therefore for that nudge to be owed at all. Mirrored by CUST_FAR_DAYS in app.js.
+CUST_FAR_DAYS = 60
 
 
 def _flag_suppressed(key, d):
@@ -293,6 +300,20 @@ def _flag_suppressed(key, d):
             asked = st.get("customization_request")
             if not (isinstance(asked, dict) and asked.get("sent")):
                 return True
+            if key == "customization_remind_60":
+                # ⚠⚠ ONLY WHEN THE ASK ACTUALLY PROMISED THIS NUDGE, i.e. when it went out more
+                # than CUST_FAR_DAYS before the show and so rendered the far-out block. Without
+                # this a gig booked INSIDE the window is the broken case, not the edge one: its
+                # show-60 anchor is ALREADY IN THE PAST, so the reminder would come due on the
+                # very first sweep, land in the queue beside the ask, and chase a client twice on
+                # day one for something they were told nothing about.
+                _sent = _d(asked.get("sent"))
+                if not _sent or (show - _sent).days <= CUST_FAR_DAYS:
+                    return True
+                # Once the show-14 chase is due there is no room for a gentler nudge as well -
+                # the same reasoning that makes chase_1 stand down for chase_2.
+                if show - datetime.timedelta(days=14) <= TODAY:
+                    return True
         return False
     return False
 
@@ -679,6 +700,15 @@ def merge_values(deal, contact):
     }
     # conditional-section flag: trivia is asked only when required and not already received (see _conditional_blocks)
     V["_cond_trivia"] = (deal.get("require_trivia") is not False) and not deal.get("trivia_received_at")
+    # Simon 2026-10-25: "if it is due more than 60 days out, give them a version where they can
+    # provide the info now, but let them know that if they don't have it, they will get a reminder
+    # 60 days out."
+    # ⚠ A CONDITIONAL BLOCK, not a second template and not a second cue key. A gig booked inside
+    # the window simply does not render it, so the ask can never promise a reminder that is already
+    # due - the requirement falls out of the design instead of needing its own guard. Mirrored by
+    # `_cond_far60` in app.js's mergeValues.
+    _show_far = _d(deal.get("show_date"))
+    V["_cond_far60"] = bool(_show_far and (_show_far - TODAY).days > CUST_FAR_DAYS)
     # photo-request scenario: the customization email picks its body by which photos are requested.
     def _numlim(x):
         try: return float(x)
