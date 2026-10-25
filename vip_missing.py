@@ -71,10 +71,17 @@ def main():
     # c stays OPEN: pie.publish/pie.unseen need it. Closed at every exit below.
 
     alerts = []
+    # ⚠⚠ `standing` is EVERY deal with an outstanding customization; `alerts` is the subset on a
+    #    REMINDER DAY. They were the same list, gated by `days not in REMINDER_DAYS` right here, and
+    #    that was fine while the email was the only output. It is wrong now that the phone bubble is
+    #    the reminder: the feed would carry the item on day 42, drop it on day 41, and bring it back
+    #    on day 28 - a bubble that vanishes while the work is still outstanding. REMINDER_DAYS is
+    #    about how often to EMAIL him, not about whether the work exists.
+    standing = []
     for d in deals:
         days = (d["show_date"] - TODAY).days
-        if days not in REMINDER_DAYS:
-            continue
+        if days < 0:
+            continue                       # the show has been and gone; nothing to bubble
         trivia_req = (d.get("require_trivia") is not False)
         photos_req = (_numlim(d.get("photo_goh_limit")) > 0 or _numlim(d.get("photo_guest_limit")) > 0)
         trivia_out = trivia_req and not d.get("trivia_done_at")     # requested & not done by Simon
@@ -104,7 +111,7 @@ def main():
                 pass
         contact = CB.get(d.get("primary_contact_id")) or {}
         V = send_due.merge_values(d, contact)
-        alerts.append({
+        _row = {
             "id": d["id"], "token": d.get("customize_token") or "",
             "name": V.get("ClientFullName") or contact.get("full_name") or d.get("deal_name") or "client",
             "phone": V.get("ClientPhone") or "(no phone on file)",
@@ -113,8 +120,12 @@ def main():
             "days": days,
             "trivia_req": trivia_req, "trivia_out": trivia_out, "trivia_recv": bool(d.get("trivia_received_at")),
             "photos_req": photos_req, "photos_out": photos_out, "photos_recv": bool(d.get("photos_received_at")),
-        })
+        }
+        standing.append(_row)
+        if days in REMINDER_DAYS:
+            alerts.append(_row)            # the EMAIL cadence; the bubble above is continuous
     alerts.sort(key=lambda a: (a["days"], a["name"]))
+    standing.sort(key=lambda a: (a["days"], a["name"]))
 
     # ── PIE CONTROL (step 4) ──────────────────────────────────────────────────────────────────
     # Published rather than derived: the qualifying set above is REMINDER_DAYS x snooze x waive x
@@ -126,11 +137,12 @@ def main():
              "sub": "needs " + " and ".join([w for w, on in (("trivia", a["trivia_out"]),
                                                              ("pictures", a["photos_out"])) if on])
                     + (" - show TODAY" if a["days"] == 0 else " - show in %dd" % a["days"]),
-             "url": f"{CRM_BASE}/?deal={a['id']}"} for a in alerts]
+             "url": f"{CRM_BASE}/?deal={a['id']}"} for a in standing]
     pie.publish(c, "cust", _pie)
     _pie_email = pie.unseen(c, "cust", [i["id"] for i in _pie])
 
-    print(f"{TODAY}: {len(alerts)} VIP-customization DONE reminder(s) (closed_won, a reminder day, requested & not done)")
+    print(f"{TODAY}: {len(standing)} deal(s) with an outstanding customization; "
+          f"{len(alerts)} on a reminder day (closed_won, requested & not done)")
     for a in alerts:
         out = [w for w, on in (("trivia", a["trivia_out"]), ("photos", a["photos_out"])) if on]
         print(f"  {a['name'][:26]:26s} in {a['days']}d  to-do: {', '.join(out)}  {a['phone']}")
