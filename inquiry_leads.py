@@ -9,6 +9,7 @@ Reminders stop automatically as soon as the deal leaves the inquiry stage.
 import sys, json, html, datetime
 from db import connect
 import mailer
+import pie
 import tz
 
 SEND = "--send" in sys.argv
@@ -47,16 +48,33 @@ def main():
                 "where d.stage='inquiry'")
     rows=cur.fetchall()
     to="simon@thesimonshow.com"
-    due=[]
+    due=[]; standing=[]      # `standing` ignores the once-a-day guard - see below
     for (did, show_date, occasion, cue_state, who) in rows:
         st = cue_state or {}
         if isinstance(st,str): st=json.loads(st or "{}")
-        if (st.get(GUARD_KEY) or {}).get("pinged")==TODAY: continue   # already reminded today
         who=(who or "Unnamed lead").strip().title()
         when=short_date(show_date)
         subj=f"{who} {when} is still in leads"
         crm=f"{CRM_BASE}/?deal={did}"
+        # ⚠ The phone's list is the STANDING condition - every deal still sitting in `inquiry` -
+        #   taken BEFORE the once-a-day guard, which is about not emailing twice in one day and not
+        #   about the lead having been dealt with. Publishing from `due` would delete the bubble a
+        #   few hours after the morning email while the lead was still untouched. Same reasoning as
+        #   likely_no_nag.
+        standing.append((did, who, when, crm))
+        if (st.get(GUARD_KEY) or {}).get("pinged")==TODAY: continue   # already reminded today
         due.append((did, subj, body_html(who, when, occasion, crm), st))
+    # ── PIE CONTROL (step 5) ── a lead sitting in `inquiry` is a STANDING condition, so this is
+    # published and reconciled exactly like the other nags, not fired once like the event kinds.
+    _pie = [{"id": pie.item_id("leads", did), "title": who, "deal_id": did,
+             "sub": "still in leads - %s" % when, "url": crm} for (did, who, when, crm) in standing]
+    pie.publish(c, "leads", _pie)
+    _keep = pie.unseen(c, "leads", [pie.item_id("leads", t[0]) for t in due])
+    due = [t for t in due if pie.item_id("leads", t[0]) in _keep]
+    if SEND and _pie:
+        pie.doorbell(c, "CRM: leads waiting", "%d lead%s still sitting in inquiries - open Pie Control"
+                     % (len(_pie), "" if len(_pie) == 1 else "s"))
+
     print(f"{TODAY}  -  {len(due)} inquiry reminder(s) {'to SEND' if SEND else '(dry-run)'}")
     for (did, subj, body, st) in due:
         print(f"  -> {subj[:80]}")

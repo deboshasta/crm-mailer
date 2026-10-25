@@ -1578,7 +1578,23 @@ def main():
     for (d,key,to,subj,body,st,no_safe,contact,cc) in now_due:
         print(f"  -> [now] {to}{('  cc:'+str(cc)) if cc else ''}  |  [{key}]  {subj[:70]}{'  [no-safe]' if no_safe else ''}")
         if SEND:
-            if _claim_dispatch(cur, d["id"], (st.get(key) or {}).get("dispatch_id") or key):
+            # PIE CONTROL (step 5): "✓ Sent", "Agreement signed" and "Deposit paid" become phone
+            # bubbles instead of email. The decision AND the write are public.pie_absorb_owner_note,
+            # so this and run-due.js cannot disagree - it returns false unless suppression is on,
+            # the key is one of those event kinds, and the recipient is Simon himself.
+            # ⚠ The entry is still marked SENT below, exactly as if it had gone out: the
+            #   notification HAS been delivered, just somewhere else. Leaving it unsent would make
+            #   every later sweep try again for ever.
+            # ⚠ Any failure here emails as normal - a bubble is never worth losing a notification.
+            _absorbed = False
+            try:
+                cur.execute("select public.pie_absorb_owner_note(%s,%s,%s,%s)", (d["id"], key, to, subj))
+                _absorbed = bool(cur.fetchone()[0])
+            except Exception as _ax:
+                print("     pie absorb failed (emailing as normal):", _ax)
+            if _absorbed:
+                print("     -> Pie Control bubble, not emailed")
+            elif _claim_dispatch(cur, d["id"], (st.get(key) or {}).get("dispatch_id") or key):
                 # The entry's own `attach` (set when it was held for approval) decides the PDF, so a
                 # send_now routed through THIS engine keeps it. Was receipts-only, which would have
                 # sent the Magic Castle invite with no invitation attached the moment that email
