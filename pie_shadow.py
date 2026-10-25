@@ -54,6 +54,10 @@ where d.cue_state is not null
 """
 
 
+# How long an approval may sit UNSEEN by the phone before this alarms. See the block in main().
+PIE_STALE_ALERT_H = 12
+
+
 def feed_items(key):
     req = urllib.request.Request(FEED, headers={"x-bamfam-key": key, "User-Agent": "pie-shadow"})
     with urllib.request.urlopen(req, timeout=45) as r:
@@ -116,6 +120,57 @@ def main():
                   "(expected until Pie Control's phone side is wired up)" % (n_acked, len(feed)))
     except Exception as e:
         print("  acks: could not read ack health: %s" % e)
+    # ── stale-approval alarm (added 2026-10-25) ──────────────────────────────────────────────────
+    # ⚠⚠ THIS IS THE REPLACEMENT FOR THE AUTHORIZE EMAIL, which stopped being sent the same day
+    #    (Simon: "stop sending email approval requests to email, only to pie control"). With no
+    #    email fallback, a phone that quietly stops polling means an approval is announced NOWHERE,
+    #    so this is the one thing left that can say so. If it is ever removed, put the fallback in
+    #    send_due.py back first.
+    # ⚠⚠ IT ALARMS ON AN UNSEEN **APPROVAL**, NOT ON ACK HEALTH IN GENERAL. The block above is
+    #    deliberately report-only because a phone that is off, away or asleep is normal; what is
+    #    NOT normal is a client email waiting for approval that the phone has never once received.
+    # ⚠ 12 HOURS, not one or six: the phone polls every 30 min and on unlock, but Android Doze can
+    #   hold a background poll for most of a night, so a shorter window would alarm most mornings -
+    #   the same false-alarm reasoning that keeps last_suggest_run out of heartbeat.py. 12h is
+    #   longer than any overnight gap and still catches a real failure inside a day.
+    # ⚠ It alarms through error_log -> phone push + AHK dialog, which is NOT email, so it respects
+    #   the instruction it exists to make safe.
+    try:
+        stale = []
+        for i in feed.values():
+            if i.get("kind") != "approval" or i.get("seen_at"):
+                continue
+            q = i.get("pending_since")
+            if not q:
+                continue
+            try:
+                qt = datetime.datetime.strptime(str(q)[:10], "%Y-%m-%d").replace(
+                    tzinfo=datetime.timezone.utc)
+            except Exception:
+                continue
+            age_h = (datetime.datetime.now(datetime.timezone.utc) - qt).total_seconds() / 3600.0
+            if age_h >= PIE_STALE_ALERT_H:
+                stale.append((i.get("id"), i.get("title"), age_h))
+        if stale:
+            print("  STALE APPROVALS (never reached the phone, and no email is sent any more):")
+            for sid, title, age_h in stale:
+                print("    %s  %s  unseen %.0fh" % (sid, title, age_h))
+            summary = ("%d approval(s) have never reached Pie Control and no authorize email is "
+                       "sent any more: %s" % (len(stale),
+                       "; ".join("%s (unseen %.0fh)" % (t, a) for _, t, a in stale)))
+            today = datetime.date.today().isoformat()
+            cur.execute("select 1 from error_log where source=%s and ts::date = %s limit 1",
+                        ("pie-approval-stale", today))
+            if cur.fetchone():
+                print("  (already alerted today - logged only)")
+            else:
+                cur.execute("insert into error_log (source, detail) values (%s, %s)",
+                            ("pie-approval-stale", summary))
+                conn.commit()
+                print("  -> alerted via error_log")
+    except Exception as e:                        # an observer must never be the thing that breaks
+        print("  stale-approval check failed: %s" % e)
+
     for i in only_feed:
         print("  ONLY IN FEED (would bubble something not in the queue): %s" % i)
     for i in only_db:

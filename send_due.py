@@ -942,9 +942,21 @@ def anchor_date(deal, anchor, stages):
 # briefs/pie-control-queue.md step 3. Simon's choice: approvals get ONE HOUR, because an approval
 # costs a send window (the 9am-9pm client cadence means a late one can slip a whole day).
 #
-# ⚠⚠ THIS IS THE FIRST STEP THAT CAN LOSE AN EMAIL, so every uncertainty below resolves to
-#    "send it anyway". Read the three guards as one rule: suppress ONLY when the switch is on AND
-#    the feed answered AND that exact item is recorded as seen.
+# ⚠⚠ CHANGED 2026-10-25 (Simon: "stop sending email approval requests to email, only to pie
+#    control"). While the switch is ON the authorize email is **NEVER** sent - not after an hour,
+#    not when the feed is unreadable, not when the stamp is missing. The phone owns approvals
+#    outright, and PIE_APPROVAL_HOLD_MIN below no longer gates anything.
+# ⚠⚠ SO THE OLD RULE HERE - "every uncertainty resolves to send it anyway" - IS NO LONGER TRUE,
+#    and that is the whole risk of this step: with no email fallback, a phone that stops polling
+#    means an approval is announced NOWHERE. Three things make that tolerable and they are the
+#    things to check if an approval is ever missed:
+#      1. the switch itself: private.config 'pie_suppress_approvals' -> anything but on/true/1/yes
+#         restores the old behaviour on the very next sweep, with no deploy;
+#      2. the queue is still visible in three places that do not involve the phone - the CRM's own
+#         approval queue, the shield badge, and the AHK watcher's ghosts;
+#      3. pie_shadow.py alarms (error_log -> phone push + AHK dialog, never email) when an approval
+#         has sat UNSEEN for PIE_STALE_ALERT_H. That alarm is the replacement for this fallback;
+#         if it is ever removed, put the fallback back first.
 # ⚠⚠ IT SHIPS SWITCHED OFF. private.config 'pie_suppress_approvals' must be set to 'on' by hand,
 #    and it should NOT be until Pie Control actually acks - with nothing acking, turning it on only
 #    delays every approval email by an hour and suppresses nothing. The row is also the kill switch:
@@ -999,26 +1011,33 @@ def _pie_hold_decision(deal_id, key, entry, pie_on, seen_map, now_utc):
 
     Returns (send_now: bool, why: str). Called both at queue time and by the catch-up pass, so the
     two can never disagree about an item."""
-    if not pie_on or seen_map is None:
+    if not pie_on:
         return True, "suppression off"
+    # ⚠⚠ FROM HERE EVERY PATH RETURNS False. The phone owns approvals while the switch is on, so
+    #    there is no timeout and no "we cannot tell, so email it" branch left. The reasons below
+    #    differ only so the Actions log still says WHY an email did not go - which matters more
+    #    now, not less, because the log is the only place this is visible.
     item = _pie_item_id(deal_id, key)
+    if seen_map is None:
+        # The feed could not be read THIS SWEEP. The entry is still in the database and will
+        # appear in the feed as soon as it recovers, so emailing here would announce something
+        # that is going to reach the phone anyway.
+        return False, "suppression on - feed unreadable this sweep, it will bubble when it recovers"
     if item not in seen_map:
         # Not in the feed => not pending any more, or snoozed. Nothing to announce either way.
         return False, "not pending (approved, cancelled or snoozed)"
     if seen_map.get(item):
         return False, "seen on the phone at %s" % seen_map[item]
     q = entry.get("approval_queued_at")
-    if not q:
-        return True, "no approval_queued_at - cannot time the hold, so send"
-    try:
-        qt = datetime.datetime.strptime(str(q)[:19], "%Y-%m-%dT%H:%M:%S").replace(
-            tzinfo=datetime.timezone.utc)
-    except Exception:
-        return True, "unparseable approval_queued_at %r - send" % q
-    age_min = (now_utc - qt).total_seconds() / 60.0
-    if age_min < PIE_APPROVAL_HOLD_MIN:
-        return False, "unseen but only %.0f min old (hold is %d)" % (age_min, PIE_APPROVAL_HOLD_MIN)
-    return True, "unseen after %.0f min" % age_min
+    age = ""
+    if q:
+        try:
+            qt = datetime.datetime.strptime(str(q)[:19], "%Y-%m-%dT%H:%M:%S").replace(
+                tzinfo=datetime.timezone.utc)
+            age = " (unseen for %.0f min)" % ((now_utc - qt).total_seconds() / 60.0)
+        except Exception:
+            age = " (unparseable approval_queued_at %r)" % q
+    return False, "suppression on - waiting for the phone%s" % age
 
 
 def main():
@@ -1417,16 +1436,23 @@ def main():
             mailer.send_email("simon@thesimonshow.com",
                               f"{len(new_blocks)} email(s) paused - missing info",
                               _blocked_alert_html(new_blocks))
-    # PIE CONTROL STEP 3: read the switch and the feed ONCE for the whole sweep. Both fail safe -
-    # off, or unreadable, means every authorize email goes out exactly as it did before step 3.
+    # PIE CONTROL STEP 3: read the switch and the feed ONCE for the whole sweep.
+    # ⚠⚠ AN UNREADABLE FEED NO LONGER TURNS SUPPRESSION OFF. It used to (`_pie_on = False` ->
+    #    announce everything), which was right while email was the fallback. Now that the phone
+    #    owns approvals outright, a feed that happens to be unreadable on one sweep is a transient
+    #    on OUR side - the entry is in the database and will bubble when the feed recovers - so
+    #    re-enabling the email here would send exactly the approval emails Simon asked to stop.
+    #    _pie_hold_decision handles seen_map=None itself, and returns False.
     _pie_on = _pie_suppress_on(cur)
     _pie_seen = _pie_seen_map(cur) if _pie_on else None
-    if _pie_on and _pie_seen is None:
-        _pie_on = False                       # feed unreadable -> announce everything
     if _pie_on:
-        print("pie: suppression ON (hold %d min); %d item(s) in the feed, %d already seen"
-              % (PIE_APPROVAL_HOLD_MIN, len(_pie_seen),
-                 sum(1 for v in _pie_seen.values() if v)))
+        if _pie_seen is None:
+            print("pie: suppression ON; the approvals feed could not be read this sweep - "
+                  "nothing will be emailed, and it will bubble when the feed recovers")
+        else:
+            print("pie: suppression ON (the phone owns approvals; no authorize email is sent); "
+                  "%d item(s) in the feed, %d already seen"
+                  % (len(_pie_seen), sum(1 for v in _pie_seen.values() if v)))
 
     # ⚠⚠ THE AUTHORIZE EMAILS ARE NO LONGER SENT HERE (step 3). This loop only logs what was newly
     #    held and carries each item's optional plain-language note across to the single pass below,
@@ -1528,6 +1554,10 @@ def main():
     if _auth_sent or _auth_held:
         print("%s  -  authorize emails: %d sent, %d held back for the phone"
               % (TODAY, _auth_sent, _auth_held))
+        if _pie_on and _auth_sent:
+            print("  !! %d authorize email(s) went out WITH SUPPRESSION ON - that should be "
+                  "impossible; _pie_hold_decision returns False on every path while it is on."
+                  % _auth_sent)
 
     # ---- SEND NOW: emails the app flagged for immediate send (cue_state[key].send_now) ----
     # The "Send now" button in the CRM sets cue_state[key].send_now = true and kicks a run.
