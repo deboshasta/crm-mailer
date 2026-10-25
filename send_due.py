@@ -858,6 +858,31 @@ def _claim_dispatch(cur, deal_id, key):
 # approval cue immediately."
 GE_LEAD_DAYS = 10
 
+def _cue_send_date(d, key, base, off):
+    """When a cue step is due. ONE implementation, called by BOTH branches of the sweep.
+
+    ⚠⚠ THIS EXISTS BECAUSE THE TWO BRANCHES DISAGREED, AND IT COST A FEATURE FOR A DAY AND A HALF.
+    The sweep handles a key in one of two places: AUTO/approval keys fall through to the main block,
+    and FLAG keys are dealt with earlier, in the `eff == "flag"` branch, which `continue`s before
+    the main block is ever reached. Both computed `base + off` themselves, and the dynamic-date
+    special cases were only ever added to the AUTO one.
+
+    `customization_request` is FLAG mode. So `_cr_send_date` - written on 2026-10-24 to bring the
+    ask forward to TODAY while the show is still ahead - sat in a branch that key never takes, and
+    was dead code. *Measured 2026-10-25: every ask ever queued still sat at show-21, and ZERO
+    queued early across ~45 sweeps, while the function tested green in isolation.* Testing the
+    helper instead of the real entry point is what hid it, which this file already warns about.
+
+    Returns None when a key has a dynamic date and is outside its window; every caller must skip.
+    """
+    sd = base + datetime.timedelta(days=off)
+    if key in ("guest_excited", "guest_excited_2"):
+        return _ge_send_date(d, key)          # the forward-to-guests split; may be None
+    if key == "customization_request":
+        return _cr_send_date(d, sd)
+    return sd
+
+
 def _cr_send_date(d, anchored):
     """When the customization ASK goes into the approval queue. Mirror of the app's _crDate.
 
@@ -1254,7 +1279,11 @@ def main():
                     if tf and not _flag_suppressed(key, d):
                         basef = anchor_date(d, anchor, stages)
                         if basef:
-                            sdatef = basef + datetime.timedelta(days=off)
+                            # The SAME function the auto branch uses. `customization_request` is
+                            # flag mode, so this is the branch that actually decides its date.
+                            sdatef = _cue_send_date(d, key, basef, off)
+                            if sdatef is None:
+                                continue                        # dynamic date, outside its window
                             ef = st.get(key) or {}
                             _efov = ef.get("date_override")
                             if _efov:
@@ -1286,13 +1315,9 @@ def main():
             if not t: continue
             base=anchor_date(d,anchor,stages)
             if not base: continue
-            send_date = base + datetime.timedelta(days=off)
-            if key in ("guest_excited", "guest_excited_2"):     # dynamic dates for the forward-to-guests split
-                send_date = _ge_send_date(d, key)
-                if send_date is None:
-                    continue
-            elif key == "customization_request":
-                send_date = _cr_send_date(d, send_date)
+            send_date = _cue_send_date(d, key, base, off)
+            if send_date is None:
+                continue                                        # dynamic date, outside its window
             e = st.get(key) or {}
             if e.get("sent") or e.get("cancelled"): continue
             # HARD EXIT: if date_override is a future date, skip immediately before computing send_date,
