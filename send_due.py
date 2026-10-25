@@ -1485,12 +1485,19 @@ def main():
         #    on the next poll - acceptable, because the feed is the source of truth and the bell is
         #    only ever an optimisation.
         if SEND:
+            # !! NO LONGER A JOIN PUSH (2026-10-25). Simon: "i would like you to figure out an
+            #    instant option that does not need a notification ... silent would be better".
+            #    public.pie_ring() writes a tiny Firestore document that Pie Control has an open
+            #    snapshot listener on - instant, and nothing appears on his phone at all. It is
+            #    the ONE place that decides how to ring, shared with approve-email.js, so this
+            #    caller did not have to know that the transport changed.
+            # !! Still best-effort and swallowed: the push carries no data (the phone fetches the
+            #    real list itself), so a failed ring costs the normal 30-minute poll and nothing
+            #    more. An approval must never fail to be HELD because a doorbell did not go.
             try:
-                import join
                 _n = len(held_new)
-                join.push("CRM: approval waiting",
-                          "%d email%s waiting for approval - open Pie Control" % (_n, "" if _n == 1 else "s"),
-                          c)
+                cur.execute("select public.pie_ring(%s)",
+                            ("%d approval%s queued" % (_n, "" if _n == 1 else "s"),))
             except Exception as _jx:
                 print("pie doorbell failed (harmless):", _jx)
 

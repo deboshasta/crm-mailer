@@ -117,8 +117,22 @@ def publish(db, kind, items):
             cur.execute("delete from public.pie_ack where item_id in "
                         "(select item_id from public.pie_items where kind=%s)", (kind,))
             cur.execute("delete from public.pie_items where kind=%s", (kind,))
+        # !! RING ONLY WHEN THE SET ACTUALLY CHANGED. publish() runs on every sweep of every nag,
+        #    so ringing unconditionally would poke the phone a dozen times a day for nothing - and
+        #    each poke costs it a CRM fetch. rowcount across the reconcile tells us whether
+        #    anything was really added or removed.
+        # !! Simon's scope answer when asked what the instant clear should cover: "any CRM bubble
+        #    whose work is done" - so this rings for every published kind, not just approvals.
+        _changed = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
         _commit(conn)
-        print("pie: published %d %s item(s)" % (len(ids), kind))
+        if _changed:
+            try:
+                cur.execute("select public.pie_ring(%s)", ("%s changed" % kind,))
+                _commit(conn)
+            except Exception as _rx:
+                print("pie: doorbell failed (harmless):", _rx)
+        print("pie: published %d %s item(s)%s"
+              % (len(ids), kind, " - rang the phone" if _changed else ""))
         return True
     except Exception as e:
         print("pie: publish failed for %s (harmless, nothing is suppressed by it):" % kind, e)
