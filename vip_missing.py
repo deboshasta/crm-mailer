@@ -35,7 +35,16 @@ TODAY = tz.today()
 # reminder days before the show: 6w, 4w, 10d, 7d, then daily 6..0. (set for O(1) lookup)
 REMINDER_DAYS = {42, 28, 10} | set(range(0, 8))   # {0,1,2,3,4,5,6,7,10,28,42}
 MAX_LOOKAHEAD = 42                                  # furthest reminder = 6 weeks out
-URGENT_SMS_MAX_DAYS = 7                              # also text the phone within the final week
+# Simon 2026-10-25: "give me a reminder to call / text people if they are within 5 days and i
+# haven't gotten the customizations ... make sure to include phone number", and, on how it should
+# sit beside this email: "the call reminder replaces it inside 5 days."
+# So within CALL_MAX_DAYS there is NO email - just one raised bubble carrying the phone number.
+# Days 6 and 7 keep the email exactly as before. Two things saying the same thing on the same day
+# is how you stop reading both, and at this range the useful act is a phone call, not another note
+# in an inbox.
+# ⚠ This REPLACES URGENT_SMS_MAX_DAYS (7), the window the retired Verizon SMS gateway used. The
+#   escalation bubble no longer fires at 6-7 days: there the email is the signal.
+CALL_MAX_DAYS = 5
 CRM_BASE = "https://crm.thesimonshow.com"
 MARKDONE_BASE = "https://crm-send-the-simon-show.vercel.app/api/approve-email?a=markdone"  # folded into approve-email (Hobby 12-fn cap)
 # (the Verizon SMS gateway is gone - replaced by a pie_alert bubble, 2026-10-25)
@@ -196,43 +205,46 @@ def main():
             f'<div style="margin:4px 0 12px">{buttons}</div>'
             f'<a href="{html.escape(deal_url)}" style="color:#5f6368;font-size:13px;text-decoration:underline">Open the deal</a>'
             '<p style="color:#9aa0a6;font-size:12px;margin-top:12px">You get this at 6 weeks, 4 weeks, 10 days and '
-            '7 days out, then every day until the show — until you mark each requested item done.</p></div>'
+            '7 days out. Inside five days this email stops and your phone gets a CALL reminder instead, '
+            'with their number on it — until you mark each requested item done.</p></div>'
         )
         # ⚠ Checked OUTSIDE `if send`, so a DRY RUN reports what it would really do. With it
         #   inside, a suppressed item still printed "(dry-run) would email ..." - a dry run that
         #   lies about the one decision being tested is worse than no dry run.
         # ⚠ The SMS goes with the email, not separately: both say the same thing, so letting the
         #   text through while suppressing the mail would defeat the whole point.
-        if pie.item_id("cust", a["id"]) not in _pie_email:
-            print(f"  seen on the phone - not emailing or texting: {a['name']}")
+        # ⚠⚠ THE CALL PHASE IS DECIDED BEFORE THE SEEN-ON-THE-PHONE TEST, and the order matters.
+        #    That test exists to stop an EMAIL repeating something already bubbled; inside five
+        #    days there is no email to suppress, and skipping here would drop the call reminder
+        #    too - the one signal that is supposed to survive.
+        call_phase = a["days"] <= CALL_MAX_DAYS
+        if not call_phase and pie.item_id("cust", a["id"]) not in _pie_email:
+            print(f"  seen on the phone - not emailing: {a['name']}")
             continue
-        if send:
+        if send and call_phase:
+            # CALL THEM. One raised bubble carrying the number, and no email at all.
+            # !! Keyed on the deal AND the show date, so the run-up raises exactly one bubble per
+            #    gig however many times this runs - it is `once`, so trashing it is final.
+            # !! raise=true: this is the escalation, and the standing `cust` bubble has been on
+            #    screen for weeks by now and is easy to stop seeing.
+            # !! COMMIT: this script does NOT set autocommit (likely_no_nag does; they differ), so
+            #    without this the insert is rolled back when the connection closes and the bubble
+            #    silently never appears.
+            cur.execute("select public.pie_alert(%s,%s,%s,%s,%s,%s)",
+                        ("vipcall_%s_%s" % (a["id"], a["showdate"]),
+                         "CALL %s" % a["name"],
+                         "%s - still need %s (%s)" % (a["phone"], todo_txt, dsc),
+                         a["id"], f"{CRM_BASE}/?deal={a['id']}", True))
+            c.commit()
+            print(f"  CALL phase ({a['days']}d) -> bubble only, no email: {a['name']} {a['phone']}")
+        elif send:
             r = mailer.send_email(OWNER, subj, body, owner=True)
             note = "email " + r["routed_to"]
-            if a["days"] <= URGENT_SMS_MAX_DAYS:
-                # FINAL WEEK: a fire-once bubble instead of the Verizon SMS gateway (Simon
-                # 2026-10-25: "vtext is depreciated"). pie_alert() rings the phone, so it lands in
-                # about a second - which is what the text used to buy.
-                # !! THIS IS A SECOND BUBBLE ABOUT A DEAL THAT ALREADY HAS A `cust` ONE, and that
-                #    is the point: the standing bubble has been on screen for weeks by now and is
-                #    easy to stop seeing. The escalation was always meant to be louder than the
-                #    thing it escalates. It is `once`, so it does not come back once trashed.
-                # !! Keyed on the deal AND the show date, so the final week raises exactly one
-                #    bubble per gig however many times this runs.
-                # !! COMMIT: this script does NOT set autocommit (likely_no_nag does; they differ),
-                #    so without this the insert is rolled back when the connection closes and the
-                #    bubble silently never appears. pie.publish() commits its own writes, which is
-                #    why nothing noticed before.
-                cur.execute("select public.pie_alert(%s,%s,%s,%s)",
-                            ("vip_%s_%s" % (a["id"], a["showdate"]),
-                             "URGENT: %s" % a["name"],
-                             "still need to DO %s (%s, %s)" % (todo_txt, dsc, a["showdate"]),
-                             a["id"]))
-                c.commit()
-                note += " + bubble"
             print(f"  sent -> {a['name']}  ({note})")
+        elif call_phase:
+            print(f"  (dry-run) CALL phase ({a['days']}d) would bubble {a['phone']}, no email: {a['name']}")
         else:
-            print(f"  (dry-run) would email{' + bubble' if a['days'] <= URGENT_SMS_MAX_DAYS else ''}: {subj}")
+            print(f"  (dry-run) would email: {subj}")
     if not send:
         print("(dry-run; pass --send to email+bubble)")
     c.close()
