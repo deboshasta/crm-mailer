@@ -100,10 +100,22 @@ def publish(db, kind, items):
                          deal_id=excluded.deal_id, url=excluded.url""",
                 (str(i["id"]), kind, (i.get("title") or "")[:200], (i.get("sub") or "")[:400],
                  i.get("deal_id"), (i.get("url") or "")[:500]))
+        # ⚠⚠ THE ACK GOES WITH THE ITEM. An ack never expires any more (Simon: see one thing
+        #    once), so an ack left behind by a finished item would silence its EMAIL for ever if
+        #    the same condition ever came back - a customization ticked off and later un-ticked,
+        #    a deal pushed out of Likely No and back in. Clearing it here makes a recurrence a
+        #    genuinely fresh item: new bubble, and the email fallback armed again.
+        #    The bubble itself returns regardless, because ZusCrmQueue bubbles everything in the
+        #    feed - this is about the fallback, not the reminder.
         if ids:
+            cur.execute("delete from public.pie_ack where item_id in "
+                        "(select item_id from public.pie_items where kind=%s and not (item_id = any(%s)))",
+                        (kind, ids))
             cur.execute("delete from public.pie_items where kind=%s and not (item_id = any(%s))",
                         (kind, ids))
         else:
+            cur.execute("delete from public.pie_ack where item_id in "
+                        "(select item_id from public.pie_items where kind=%s)", (kind,))
             cur.execute("delete from public.pie_items where kind=%s", (kind,))
         _commit(conn)
         print("pie: published %d %s item(s)" % (len(ids), kind))
