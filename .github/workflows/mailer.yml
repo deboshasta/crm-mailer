@@ -80,6 +80,32 @@ jobs:
       # continue-on-error is LOAD-BEARING: a disagreement exits 1, and without this the mailer job
       # would be marked failed and notify_fail.py would alert as though email had broken. The
       # shadow is an observer; it must never be the thing that breaks the sweep.
+      # ── keep the STANDING bubbles current (added 2026-10-25) ──────────────────────────────
+      # !! WITHOUT THIS A BUBBLE OUTLIVES ITS WORK BY UP TO A WEEK. Each standing kind is
+      #    published by its own nag, and a published row is only reconciled when THAT script next
+      #    runs - likely_no twice a day, deposit-mailed WEEKLY. Meanwhile the bubble is a standing
+      #    item, so the phone faithfully re-adds it on every poll.
+      #    *Reported by Simon 2026-10-25, both halves at once: he moved Tanya out of Likely No and
+      #    the bubble stayed; Vincent paid his deposit at 05:54, he deleted the bubble, and it came
+      #    straight back. Both rows were still sitting in pie_items.*
+      # !! NO --send, AND THAT IS THE WHOLE TRICK. All four call pie.publish() BEFORE their own
+      #    --send gate, so this reconciles the feed and sends not one email. Running these on the
+      #    sweep with --send would email him up to 48 times a day.
+      # !! MEASURED BEFORE ADDING, because this repo's first rule is to flag egress waste: 13
+      #    likely_no deals carrying 23 kB of cue_state in total, and 27 deposit_docs rows. Tens of
+      #    kB per sweep, not megabytes - so twice-hourly reconciliation is affordable here. Measure
+      #    again if those counts ever grow by an order of magnitude.
+      # !! continue-on-error for the same reason the shadow check has it: a publisher that fails
+      #    must not mark the sweep failed and set notify_fail.py off as though email had broken.
+      # !! pie.publish() rings the phone itself when the set actually changed, so a cleared bubble
+      #    disappears within a second of this step rather than on the phone's next poll.
+      - name: Reconcile the standing Pie Control bubbles
+        continue-on-error: true
+        run: |
+          python likely_no_nag.py
+          python deposit_mailed_nag.py
+          python vip_missing.py
+          python blocked_digest.py
       - name: Pie Control feed shadow check
         continue-on-error: true
         run: python pie_shadow.py
