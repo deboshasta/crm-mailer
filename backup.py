@@ -204,22 +204,19 @@ def notify(ok, detail):
     try:
         import mailer
         if ok:
-            # SUCCESS -> a Pie Control bubble, not a text (Simon 2026-10-25: "vtext is
-            # depreciated"). Details stay in the GitHub Release; this only says it ran.
-            # !! ONE BUBBLE PER DAY, BY DESIGN AND WORTH KNOWING: the id carries STAMP's date, so
-            #    a re-run on the same day cannot bubble twice - but a successful backup every
-            #    night does mean a bubble every night that Simon has to trash. If that turns out
-            #    to be noise, the right change is to drop this success notification entirely
-            #    rather than make it quieter: failure is already alerted separately, below and
-            #    through heartbeat.py, so nothing is lost by a silent success.
-            try:
-                import db as _db
-                _c = _db.connect(); _cur = _c.cursor()
-                _cur.execute("select public.pie_alert(%s,%s,%s)",
-                             ("backup_%s" % STAMP[:10], "CRM backup OK", "Backup succeeded %s" % STAMP))
-                _c.commit(); _c.close()
-            except Exception as _bx:
-                print("backup bubble failed (harmless):", _bx)
+            # SUCCESS IS SILENT (Simon 2026-10-25: "make backup OK silent").
+            #
+            # It used to text 7324926071@vtext.com, and for a few hours on the day vtext was
+            # retired it raised a Pie Control bubble instead - which meant a bubble every single
+            # night that he had to trash. A notification that fires on every ordinary day is one
+            # you stop reading, which is the whole argument against it.
+            # !! NOTHING IS LOST, AND THIS IS WHY IT IS SAFE: a FAILURE still sends the full email
+            #    below AND the phone push, and a backup that silently stops running is caught
+            #    separately by heartbeat.py's `last_backup_run` staleness check - so silence here
+            #    can never mean an unnoticed problem, only an unremarkable success.
+            # !! If reassurance is ever wanted back, the honest place is a once-a-WEEK summary, not
+            #    a nightly ping. The Releases list is the real record: `gh release list`.
+            print("backup OK (%s) - success is deliberately silent" % STAMP)
             return
         # FAILURE -> full email to Simon (unchanged), plus the phone push below.
         subj = "backup FAILED - %s" % STAMP
