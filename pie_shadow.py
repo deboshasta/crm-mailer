@@ -19,7 +19,7 @@ client mail, and exists only so the feed can be trusted before anything starts s
 
 ⚠ It mirrors app.js's approvalPending(), which is what the browser queue shows:
       pending_approval AND NOT cancelled AND NOT sent AND NOT _sending AND snooze not in future
-  No 4am-ET gate - that belongs to the overnight nag, not the queue.
+  ...and a 5am-ET gate on entries queued today, mirroring pie_approvals() and app.js.
 
 ⚠ A DISAGREEMENT writes one error_log row, which an AFTER INSERT trigger turns into a phone push
   and an AHK dialog. At most ONE per calendar day: a systematic disagreement would otherwise fire
@@ -51,6 +51,14 @@ where d.cue_state is not null
   and (e.val->>'cancelled') is null
   and (e.val->>'_sending') is null
   and coalesce((e.val->>'snoozed_until')::numeric, 0) <= extract(epoch from now()) * 1000
+  -- 5am ET (Simon 2026-10-26). ⚠ This is a DELIBERATE second copy - the whole point of this check
+  -- is that it restates the rule independently - but it must restate the SAME rule. pie_approvals()
+  -- gained this gate in the same push; without it every approval queued overnight reads as
+  -- "only in db" between midnight and 5am and writes an error_log row, which becomes a phone push
+  -- and an AHK dialog.
+  and ( (e.val->>'pending_since') is null
+        or (e.val->>'pending_since') <> to_char((now() at time zone 'America/New_York')::date,'YYYY-MM-DD')
+        or extract(hour from (now() at time zone 'America/New_York'))::int >= 5 )
 """
 
 
