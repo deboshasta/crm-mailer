@@ -1830,15 +1830,61 @@ def main():
 
     # ---- Magic Castle invite: ONE per deal (shared marker cue_state['magic_castle']). Closed-Won version
     #      fires at Closed Won (priority); deposit version the moment the deposit is marked paid. Whichever
-    #      WAS: the deposit version waited MC_SEND_DELAY_MIN after `deposit_paid_at` before it even
-    #      appeared in the approval queue (Simon 2026-10-13: "instead of having a buffer for it
-    #      entering the cue, have it enter immediately"). That wait did not disappear - it MOVED to
-    #      after approval, so the button reads "Approve and send in 10 minutes" and the send is
-    #      scheduled rather than immediate. See MC_SEND_DELAY_MIN / approve-email.js.
-    #      fires first claims the marker; the other is suppressed. It HOLDS for Simon's approval (never
-    #      auto-sends); the PDF is attached when he Approves (attach:'magic_castle'). One authorize email per
-    #      deal (only when it first holds - pending_approval guards re-alerts). ----
+    #      fires first claims the marker; the other is suppressed. The PDF rides on attach:'magic_castle'.
+    #
+    #      ⚠⚠ IT AUTO-SENDS as of 2026-10-27 and no longer enters the approval queue at all
+    #         (Simon: "have them skip the approval cue and just send"). So there is no approve_token,
+    #         no pending_approval and no authorize email from here - only a send_now entry and an
+    #         owner note. The Closed-Won twin in run-due.js's mc_init block was changed the same day
+    #         and must stay in step; it is the only other place this key is queued.
+    #      ⚠ The deposit version still waits MC_SEND_DELAY_MIN. That buffer has moved twice: it was
+    #        a delay before entering the queue, then (2026-10-13) a delay after approval, and it is
+    #        now a delay before an unattended send - which makes it the ONLY way to stop one, by
+    #        cancelling the entry in the deal's Email cue inside those ten minutes.
+    #      ⚠ The approval queue is therefore no longer what makes this once-per-deal. The guard on
+    #        the entry is, so it tests send_now as well as sent/cancelled. ----
+    # ⚠⚠ MIRRORS MC_SEND_DELAY_MIN in approve-email.js and app.js. THIRD COPY - keep all three equal.
+    #    Simon 2026-10-27 kept the 10 minutes when these stopped needing approval: with no approval
+    #    click, this buffer is the ONLY window in which an invite can still be pulled back.
+    MC_SEND_DELAY_MIN = 10
     _now = datetime.datetime.now(datetime.timezone.utc)
+
+    # ⚠⚠ STRIPPED when an entry is rewritten as an auto-send. Both blocks build the new entry as
+    #    {**e, ...}, and `e` is an EXISTING entry - so without this an invite that had been held
+    #    would be written back carrying pending_approval and approve_token ALONGSIDE send_now:
+    #    sent to the client AND still sitting in the approval queue, which is the "approval
+    #    resurrected" failure the app.js _cueWrite audit (2026-10-24) exists to prevent.
+    #    `snoozed_until` goes too, or a Send-later snooze would keep hiding an entry that has
+    #    already gone out. Measured in a dry run before this was added: a real entry came through
+    #    with pending_approval, approve_token, pending_since AND snoozed_until all intact.
+    #    `send_after` is in the list for the same reason: it is a timing field from a previous life
+    #    of this entry, and a stale FUTURE one would silently delay a send we meant to be immediate.
+    #    Both blocks set it themselves after the spread when they want one, so nothing is lost.
+    _APPROVAL_KEYS = ("pending_approval", "approve_token", "pending_since", "snoozed_until",
+                      "flag_approval_sent", "approval_queued_at", "approval_email_sent",
+                      "send_after")
+
+    def _owner_note(st_, slug, label, client_email, when_iso=None):
+        """Queue the "it went out" note for Simon as an ordinary _sentconf_ entry.
+
+        ⚠ Deliberately NOT a bespoke mechanism: the _sentconf_ prefix is what pie_event_kind()
+          maps to kind 'sent', so public.pie_absorb_owner_note turns it into a Pie Control bubble
+          while suppression is on and emails it if Simon ever switches suppression off. One path,
+          the same as every other owner notification.
+        ⚠ It carries the SAME send_after as the email it reports, so the bubble appears when the
+          invite actually goes rather than ten minutes early.
+        """
+        # ⚠ SLUG, not the label - a cue_state key must have no spaces. The first dry run
+        #   produced "_sentconf_auto_Magic Castle invite_<ts>", which is legal JSON and a
+        #   trap everywhere a key is put in a URL (?fixemail=) or split on whitespace.
+        k = "_sentconf_auto_%s_%d" % (slug, int(_now.timestamp()))
+        st_[k] = {"send_now": True, "to": "simon@thesimonshow.com",
+                  "subject": "✓ Sent: %s to %s" % (label, client_email),
+                  "body": "<p>%s went out to <b>%s</b>.</p><p>It sent on its own - these no longer "
+                          "wait for your approval.</p>" % (label, client_email),
+                  **({"send_after": when_iso} if when_iso else {})}
+        return k
+
     mc_held = 0
     for d in deals:
         st = d.get("cue_state") or {}
@@ -1862,32 +1908,44 @@ def main():
         if not t: continue
         V = merge_values(d, contact)
         subj = fill_subject(t["subject"], V)
-        hbody = render_html(t["body"], V, "")                      # no signature; added inline on Approve
-        token = secrets.token_urlsafe(24)
+        # ⚠ Rendered WITH the signature, unlike the held version which left it off for approve-email.js
+        #   to add. That makes it independent of which sender wins the race: run-due.js only appends a
+        #   signature when the body does not already carry the card URL, and send_due.py appends none
+        #   at all. Either way it goes out signed exactly once.
+        hbody = render_html(t["body"], V, signature)
         nm = contact.get("full_name") or d.get("deal_name") or "deal"
-        note = (("Note: this deposit Magic Castle invite is set to get your OK before it sends, because you "
-                 "asked me to hold it for now. When you're ready for it to go out on its own, just tell me."
-                 if version == "magic_castle" else
-                 "Note: this email is newly set to get your OK before it goes to anyone. Once you've seen a few "
-                 "go out and you're happy, just tell me and I'll let it send on its own.")
-                + " The invite PDF attaches automatically when you approve.")
-        st["magic_castle"] = {**e, "pending_approval": True, "approve_token": token,
+        # ⚠⚠ AUTO-SEND, NO APPROVAL (Simon 2026-10-27: "have them skip the approval cue and just send").
+        #    The deposit version keeps its 10-minute buffer, which is now the only way to stop one:
+        #    cancel the entry in the deal's Email cue before it fires.
+        #    ⚠ `attach` stays - it is what gets the invitation PDF on, and send-now.js now declines
+        #      any entry carrying it so run-due.js (which has the map) does the send.
+        when = ((_now + datetime.timedelta(minutes=MC_SEND_DELAY_MIN)).isoformat().replace("+00:00", "Z")
+                if version == "magic_castle" else None)
+        st["magic_castle"] = {**{k2: v2 for k2, v2 in e.items() if k2 not in _APPROVAL_KEYS},
+                              "send_now": True,
                               "to": contact["email"], "subject": subj, "body": hbody,
                               "attach": "magic_castle", "via": version,
-                              "pending_since": e.get("pending_since") or TODAY.isoformat()}
-        print("  -> [magic:%s HELD] %s  |  %s" % (version, contact["email"], subj[:46]))
+                              **({"send_after": when} if when else {})}
+        note_key = _owner_note(st, "mc", "Magic Castle invite", contact["email"], when)
+        print("  -> [magic:%s AUTO%s] %s  |  %s"
+              % (version, (" +%dm" % MC_SEND_DELAY_MIN) if when else "", contact["email"], subj[:46]))
         if SEND:
-            mailer.send_email("simon@thesimonshow.com", f"Approval for {nm}: {subj}",
-                              _authorize_email_html([(nm, "magic_castle", contact["email"], subj, hbody, token, d["id"], note)]),
-                              owner=True)
             _save_cue(cur, d["id"], st, "magic_castle")
+            _save_cue(cur, d["id"], st, note_key)
             mc_held += 1
-    if SEND and mc_held: print(f"magic castle: {mc_held} held for approval (authorize email sent).")
+    if SEND and mc_held: print(f"magic castle: {mc_held} queued to auto-send (no approval).")
 
     # ---- W9: on Closed Won for ORGANIZATION deals (corporate / school / non_profit / municipal - not a
-    #      private family/individual). HOLDS for Simon's approval (never auto-sends); the W9 PDF is attached
-    #      when he Approves (attach:'w9_email'). One per deal (cue_state['w9_email']); pending_approval guards
-    #      re-alerts. Keep W9_EVENT_TYPES in sync with app.js. ----
+    #      private family/individual). The W9 PDF rides on attach:'w9_email'. One per deal
+    #      (cue_state['w9_email']). Keep W9_EVENT_TYPES in sync with app.js.
+    #
+    #      ⚠⚠ IT AUTO-SENDS as of 2026-10-27 (Simon: "have them skip the approval cue and just
+    #         send"), with no buffer - see the Magic Castle block above for why that one keeps its
+    #         ten minutes and this one does not.
+    #      ⚠ pending_approval used to be what stopped it re-queueing every sweep. With nothing
+    #        holding, send_now is: the guard below tests it, and WITHOUT that test every sweep
+    #        would rewrite the entry and mint ANOTHER owner note, so Simon would get a bubble
+    #        about the same W9 every half hour until it sent. ----
     W9_EVENT_TYPES = ("corporate", "school", "non_profit", "municipal")
     w9_held = 0
     for d in deals:
@@ -1898,31 +1956,35 @@ def main():
         st = d.get("cue_state") or {}
         if isinstance(st,str): st=json.loads(st or "{}")
         e = st.get("w9_email") or {}
-        if e.get("sent") or e.get("cancelled") or e.get("pending_approval"): continue
+        if e.get("sent") or e.get("cancelled") or e.get("pending_approval") or e.get("send_now"): continue
         contact = CB.get(d.get("primary_contact_id")) or {}
         if not contact.get("email"): continue
         t = TPL.get("w9_email")
         if not t: continue
         V = merge_values(d, contact)
         subj = fill_subject(t["subject"], V)
-        hbody = render_html(t["body"], V, "")                 # no signature; added inline on Approve
-        token = secrets.token_urlsafe(24)
+        # Signed at queue time - see the note on the Magic Castle body above for why.
+        hbody = render_html(t["body"], V, signature)
         nm = contact.get("full_name") or d.get("deal_name") or "deal"
-        note = ("Note: this email is newly set to get your OK before it goes to anyone. Once you've seen a few "
-                "go out and you're happy, just tell me and I'll let it send on its own."
-                " The W9 PDF attaches automatically when you approve.")
-        st["w9_email"] = {**e, "pending_approval": True, "approve_token": token,
+        # ⚠⚠ AUTO-SEND, NO APPROVAL (Simon 2026-10-27). The held version's own note had already
+        #    offered exactly this - "once you've seen a few go out and you're happy, just tell me
+        #    and I'll let it send on its own" - so this is that switch being thrown.
+        #    ⚠ No buffer here, unlike the deposit Magic Castle: a W9 goes to an organisation that
+        #      has just booked and asked for it, so there is nothing to reconsider. It still only
+        #      ever fires once per deal, on Closed Won, for the four organisation event types.
+        #    ⚠ `attach` stays - it is what puts the W9 PDF on, and send-now.js declines it so
+        #      run-due.js does the send.
+        st["w9_email"] = {**{k2: v2 for k2, v2 in e.items() if k2 not in _APPROVAL_KEYS},
+                          "send_now": True,
                           "to": contact["email"], "subject": subj, "body": hbody,
-                          "attach": "w9_email",
-                          "pending_since": e.get("pending_since") or TODAY.isoformat()}
-        print("  -> [w9 HELD] %s  |  %s" % (contact["email"], subj[:46]))
+                          "attach": "w9_email"}
+        note_key = _owner_note(st, "w9", "W9", contact["email"])
+        print("  -> [w9 AUTO] %s  |  %s" % (contact["email"], subj[:46]))
         if SEND:
-            mailer.send_email("simon@thesimonshow.com", f"Approval for {nm}: {subj}",
-                              _authorize_email_html([(nm, "w9_email", contact["email"], subj, hbody, token, d["id"], note)]),
-                              owner=True)
             _save_cue(cur, d["id"], st, "w9_email")
+            _save_cue(cur, d["id"], st, note_key)
             w9_held += 1
-    if SEND and w9_held: print(f"w9: {w9_held} held for approval (authorize email sent).")
+    if SEND and w9_held: print(f"w9: {w9_held} queued to auto-send (no approval).")
 
     # ---- self gig check-ins: reminders TO Simon about upcoming booked gigs ----
     self_to = mailer.load_config()["from_email"]
