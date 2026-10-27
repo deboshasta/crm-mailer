@@ -59,13 +59,16 @@ TRIVIA_SETS = {
         ("np_anything",       "Anything else you'd like me to know?"),
     ],
     "company": [
-        ("co_motto",          "What is a motto or slogan that is known within your company?"),
-        ("co_known_person",   "Who is someone everyone in the company knows?"),
-        ("co_person_qualities","What are some of this person's good qualities, or accomplishments?"),
-        ("co_surprising",     "What is something most people would find surprising about your company or industry?"),
-        ("co_accomplished",   "What is something your company has accomplished this year?"),
-        ("co_location",       "What is a special location to your company? What is special about it?"),
-        ("co_goals",          "What are your company's mid-term goals?"),
+        ("co_big_number",        "What is a big number your company is proud of? Customers served, projects completed, years in business, cups of coffee — anything you count."),
+        ("co_signature_thing",   "What is one specific product, service, or thing your company is known for? (The exact one, please — the more specific, the better.)"),
+        ("co_motto",             "What is a motto or slogan that is known within your company?"),
+        ("co_location",          "What is a special location to your company? What is special about it?"),
+        ("co_surprising",        "What is something most people would find surprising about your company or industry?"),
+        ("co_accomplished",      "What is something your company has accomplished this year?"),
+        ("co_known_person",      "Is there someone everyone in the company knows? (A leader, a long-timer, the person at the front desk — anyone at all. Feel free to skip this one if nobody springs to mind.)"),
+        ("co_person_hobbies",    "If you named someone above — what are two or three things they do outside of work? (Golf, guitar, marathons — specific activities are perfect.)"),
+        ("co_person_qualities",  "What are some of this person's good qualities, or accomplishments?"),
+        ("co_charity",           "Is there a charity or cause your company supports?"),
     ],
     "school": [
         ("sc_learning",       "What are some things that all the students are learning about as a school?"),
@@ -89,7 +92,17 @@ TRIVIA_SETS = {
     ],
 }
 TRIVIA_QUESTIONS = TRIVIA_SETS["goh"]                 # default / backward-compat
+# Questions no longer ASKED, kept so an answer a client ALREADY GAVE still gets real wording in
+# Simon's summary mail instead of a raw key. _trivia_html surfaces any answered key outside the
+# chosen set via TRIVIA_LABELS.get(key, key), so dropping a key from TRIVIA_SETS *alone* silently
+# degrades a historical answer. Retired 2026-10-27: co_goals, because the one client ever asked it
+# replied "(Not sure what to put here - can we skip this one please?)". A live set always wins, so
+# re-adding a key here is harmless.
+RETIRED_TRIVIA_LABELS = {
+    "co_goals": "What are your company's mid-term goals?",
+}
 TRIVIA_LABELS = {k: q for qs in TRIVIA_SETS.values() for (k, q) in qs}   # key -> label, all sets
+TRIVIA_LABELS.update({k: v for k, v in RETIRED_TRIVIA_LABELS.items() if k not in TRIVIA_LABELS})
 
 def pick_trivia_set(deal):
     """Mirror trivia.html: GOH precedence, then event_type; municipal falls back to the non-profit
