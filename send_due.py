@@ -40,58 +40,79 @@ GCAL_PASTE_BASE = "https://crm-send-the-simon-show.vercel.app/api/gcal-link"
 # (guest-of-honor takes precedence, then event_type) so Simon's summary lines up.
 TRIVIA_SETS = {
     "goh": [
-        ("best_qualities",   "What are some of the guest of honor's best qualities?"),
-        ("hobbies",          "What are some of the guest of honor's hobbies?"),
-        ("everyone_knows",   "What are a few things everyone knows about the guest of honor?"),
-        ("no_one_knows",     "What are a few things almost no-one knows about the guest of honor? (obscure facts, nothing embarrassing)"),
-        ("accomplishments",  "What are some of the guest of honor's biggest accomplishments?"),
-        ("special_location", "What is a location that has special meaning to the guest of honor?"),
-        ("location_why",     "Why is this location special?"),
-        ("anything_else",    "Anything else you'd like me to know about the guest of honor?"),
+        ("goh_number",           "Is there a number that means something to the guest of honor? A jersey number, a year, how many grandchildren, how many years doing what they do — anything at all.", "num"),
+        ("special_location",     "What is a location that has special meaning to the guest of honor?", "place"),
+        ("location_why",         "Why is this location special? Please be specific.", "place"),
+        ("best_qualities",       "What are some of the guest of honor's best qualities?", "people"),
+        ("hobbies",              "What are some of the guest of honor's hobbies?", "people"),
+        ("everyone_knows",       "What are a few things everyone knows about the guest of honor?", "people"),
+        ("no_one_knows",         "What are a few things almost no-one knows about the guest of honor? (Looking for obscure facts, nothing embarrassing please)", "people"),
+        ("accomplishments",      "What are some of the guest of honor's biggest accomplishments?", "people"),
+        ("goh_lots",             "What does the guest of honor have a lot of? Records, tools, shoes, mugs, stories about one particular thing — anything they have more of than most people. Roughly how many?", "lots"),
+        ("anything_else",        "Anything else you'd like me to know about the guest of honor?", "more"),
     ],
     "nonprofit": [
-        ("np_goals",          "What are some of your goals for this year?"),
-        ("np_place",          "What is a place that is important to your organization, and why?"),
-        ("np_accomplishments","What are some recent accomplishments of your organization?"),
-        ("np_obscure",        "What is an obscure fact about your organization, or your mission?"),
-        ("np_good",           "What are some good things that come from people supporting your organization?"),
-        ("np_number",         "What is a number that has significance to your organization? (e.g. we donated 125 kidneys, or we built 32 libraries.)"),
-        ("np_anything",       "Anything else you'd like me to know?"),
+        ("np_number",            "What is a number that has significance to your organization? (For example: we donated 125 kidneys, or we built 32 libraries.)", "num"),
+        ("np_place",             "What is a place that is important to your organization, and why?", "place"),
+        ("np_people",            "Who is someone everyone in your organization knows — a founder, a long-time volunteer, a board member? What are two or three things they do outside of this work?", "people"),
+        ("np_lots",              "What is there a LOT of in your world? Volunteers, meals, boxes, phone calls, forms — and roughly how many?", "lots"),
+        ("np_goals",             "What are some of your goals for this year?", "more"),
+        ("np_accomplishments",   "What are some recent accomplishments of your organization?", "more"),
+        ("np_obscure",           "What is an obscure fact about your organization, or your mission?", "more"),
+        ("np_good",              "What are some good things that come from people supporting your organization?", "more"),
+        ("np_anything",          "Anything else you'd like me to know?", "more"),
     ],
     "company": [
-        ("co_big_number",        "What is a big number your company is proud of? Customers served, projects completed, years in business, cups of coffee — anything you count."),
-        ("co_signature_thing",   "What is one specific product, service, or thing your company is known for? (The exact one, please — the more specific, the better.)"),
-        ("co_motto",             "What is a motto or slogan that is known within your company?"),
-        ("co_location",          "What is a special location to your company? What is special about it?"),
-        ("co_surprising",        "What is something most people would find surprising about your company or industry?"),
-        ("co_accomplished",      "What is something your company has accomplished this year?"),
-        ("co_known_person",      "Is there someone everyone in the company knows? (A leader, a long-timer, the person at the front desk — anyone at all. Feel free to skip this one if nobody springs to mind.)"),
-        ("co_person_hobbies",    "If you named someone above — what are two or three things they do outside of work? (Golf, guitar, marathons — specific activities are perfect.)"),
-        ("co_person_qualities",  "What are some of this person's good qualities, or accomplishments?"),
-        ("co_charity",           "Is there a charity or cause your company supports?"),
+        ("co_big_number",        "What is a big number your company is proud of? Customers served, projects completed, years in business, cups of coffee — anything you count.", "num"),
+        ("co_inside_number",     "Is there a number only people inside the company would recognise? A room number, a model number, the year you started, an extension everyone knows by heart.", "num"),
+        ("co_location",          "What is a special location to your company? What is special about it?", "place"),
+        ("co_known_person",      "Is there someone everyone in the company knows? (A leader, a long-timer, the person at the front desk — anyone at all. Feel free to skip this one if nobody springs to mind.)", "people"),
+        ("co_person_hobbies",    "If you named someone above — what are two or three things they do outside of work? (Golf, guitar, marathons — specific activities are perfect.)", "people"),
+        ("co_person_qualities",  "What are some of this person's good qualities, or accomplishments?", "people"),
+        ("co_lots",              "What is there a LOT of at your company? Clients, trucks, spreadsheets, coffee cups, acronyms — and roughly how many?", "lots"),
+        ("co_signature_thing",   "What is one specific product, service, or thing your company is known for? (The exact one, please — the more specific, the better.)", "more"),
+        ("co_motto",             "What is a motto or slogan that is known within your company?", "more"),
+        ("co_surprising",        "What is something most people would find surprising about your company or industry?", "more"),
+        ("co_accomplished",      "What is something your company has accomplished this year?", "more"),
     ],
     "school": [
-        ("sc_learning",       "What are some things that all the students are learning about as a school?"),
-        ("sc_accomplishments","What are some accomplishments within the school that everyone is familiar with? (e.g. a student won a national award, or a team finally beat a big rival school.)"),
-        ("sc_goals",          "What are some goals that the students are working toward together as a group?"),
-        ("sc_people",         "Who are some interesting people who graduated from the school, or visited recently?"),
-        ("sc_tradition",      "What is a tradition or event that everyone at the school looks forward to?"),
-        ("sc_known_for",      "What is something your school is especially known for?"),
-        ("sc_admired",        "Who is a teacher, coach, or staff member that many students admire, and why?"),
-        ("sc_anything",       "Anything else you'd like me to know?"),
+        ("sc_number",            "Is there a number everyone at the school knows? The size of the graduating class, a jersey number, the year the school opened, how many days until something big.", "num"),
+        ("sc_place",             "What is a place at or near the school that everyone knows? What happens there?", "place"),
+        ("sc_people",            "Who are some interesting people who graduated from the school, or some interesting people who visited recently?", "people"),
+        ("sc_admired",           "Who is a teacher, coach, or staff member that many students admire, and why?", "people"),
+        ("sc_lots",              "What is there a LOT of at your school? Students, trophies, lockers, stairs, spirit days — and roughly how many?", "lots"),
+        ("sc_learning",          "What are some things that all the students are learning about as a school?", "more"),
+        ("sc_accomplishments",   "What are some accomplishments within the school that everyone is familiar with? (For example: a student won a national award for a scientific discovery, or a team finally beat a big rival school.)", "more"),
+        ("sc_goals",             "What are some goals that the students are working toward together as a group?", "more"),
+        ("sc_tradition",         "What is a tradition or event that everyone at the school looks forward to?", "more"),
+        ("sc_known_for",         "What is something your school is especially known for?", "more"),
+        ("sc_anything",          "Anything else you'd like me to know?", "more"),
     ],
     "private": [
-        ("pp_funfacts",       "What are some fun facts about individuals who will be attending the party? (Please include their names.)"),
-        ("pp_inside_jokes",   "What are some inside jokes amongst the group?"),
-        ("pp_longest",        "Who has known each other the longest? Tell me a bit about them."),
-        ("pp_newest",         "Who is newest to the group? Tell me their name and a bit about them."),
-        ("pp_memory",         "What is a favorite memory or funny story this group shares?"),
-        ("pp_celebrating",    "Is anyone attending celebrating something special? Tell me about it."),
-        ("pp_together",       "What is something this group loves to do together?"),
-        ("pp_anything",       "Anything else you'd like me to know?"),
+        ("pp_number",            "Is there a number that means something to this group? A house number, how many years you have known each other, how many kids between you, a date everyone remembers.", "num"),
+        ("pp_place",             "What is a place that means something to this group? What happened there?", "place"),
+        ("pp_funfacts",          "What are some fun facts about individuals who will be attending the party? (Please include their names.)", "people"),
+        ("pp_longest",           "Who has known each other the longest? Tell me a bit about them.", "people"),
+        ("pp_newest",            "Who is newest to the group? Tell me their name and a bit about them.", "people"),
+        ("pp_celebrating",       "Is anyone attending celebrating something special? Tell me about it.", "people"),
+        ("pp_lots",              "What is there a LOT of when this group gets together? Dogs, cousins, casseroles, opinions about one particular topic — and roughly how many?", "lots"),
+        ("pp_inside_jokes",      "What are some inside jokes amongst the group?", "more"),
+        ("pp_memory",            "What is a favorite memory or funny story this group shares?", "more"),
+        ("pp_together",          "What is something this group loves to do together?", "more"),
+        ("pp_anything",          "Anything else you'd like me to know?", "more"),
     ],
 }
 TRIVIA_QUESTIONS = TRIVIA_SETS["goh"]                 # default / backward-compat
+# Section id -> heading, mirroring app_settings.trivia_question_sets -> sections and
+# crm-forms/trivia.html SECTIONS. The summary mail groups the answers the SAME way the client
+# saw them, so a gap in a section reads here as the missing ingredient it actually is.
+TRIVIA_SECTIONS = [
+    ("num", "Important numbers"),
+    ("place", "Important places"),
+    ("people", "Important people"),
+    ("lots", "What there's a lot of"),
+    ("more", "Anything else"),
+]
 # Questions no longer ASKED, kept so an answer a client ALREADY GAVE still gets real wording in
 # Simon's summary mail instead of a raw key. _trivia_html surfaces any answered key outside the
 # chosen set via TRIVIA_LABELS.get(key, key), so dropping a key from TRIVIA_SETS *alone* silently
@@ -100,8 +121,9 @@ TRIVIA_QUESTIONS = TRIVIA_SETS["goh"]                 # default / backward-compa
 # re-adding a key here is harmless.
 RETIRED_TRIVIA_LABELS = {
     "co_goals": "What are your company's mid-term goals?",
+    "co_charity": "Is there a charity or cause your company supports?",
 }
-TRIVIA_LABELS = {k: q for qs in TRIVIA_SETS.values() for (k, q) in qs}   # key -> label, all sets
+TRIVIA_LABELS = {k: q for qs in TRIVIA_SETS.values() for (k, q, _s) in qs}   # key -> label, all sets
 TRIVIA_LABELS.update({k: v for k, v in RETIRED_TRIVIA_LABELS.items() if k not in TRIVIA_LABELS})
 
 def pick_trivia_set(deal):
@@ -616,14 +638,32 @@ def trivia_notify_html(d, V, crm_url, cal_url, answers):
     b.append('<table style="border-collapse:collapse;width:100%;max-width:640px">')
     qs = pick_trivia_set(d)                 # same set the client saw (GOH precedence, then event type)
     shown = set()
-    for key,q in qs:
-        shown.add(key)
-        a=answers.get(key)
-        a=("" if a is None else str(a)).strip()
+
+    def _row(q, a):
+        a = ("" if a is None else str(a)).strip()
         val = html.escape(a) if a else '<em style="color:#9aa0a6">(not answered)</em>'
         b.append(f'<tr><td style="padding:9px 0;border-top:1px solid #eee">'
                  f'<div style="color:#5f6368;font-size:12px;margin-bottom:3px"><b>{html.escape(q)}</b></div>'
                  f'<div>{val}</div></td></tr>')
+
+    # Grouped exactly as the form presented it. An entry with no section (a per-deal override saved
+    # before sections existed) falls into the untitled group at the end rather than vanishing.
+    seen_sec = set()
+    for sec_id, sec_title in TRIVIA_SECTIONS:
+        grp = [t for t in qs if (t[2] if len(t) > 2 else "") == sec_id]
+        if not grp:
+            continue
+        seen_sec.add(sec_id)
+        b.append(f'<tr><td style="padding:16px 0 2px"><div style="font-size:11px;letter-spacing:1.2px;'
+                 f'text-transform:uppercase;color:#9aa0a6"><b>{html.escape(sec_title)}</b></div></td></tr>')
+        for t in grp:
+            shown.add(t[0])
+            _row(t[1], answers.get(t[0]))
+    for t in qs:
+        if t[0] in shown:
+            continue
+        shown.add(t[0])
+        _row(t[1], answers.get(t[0]))
     # safety: surface any answered key that isn't in the chosen set (e.g. the set changed after submit)
     for key,a in (answers or {}).items():
         if key in shown: continue
