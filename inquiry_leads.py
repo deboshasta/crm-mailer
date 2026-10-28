@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Daily 7am reminder: for every deal still in the 'inquiry' stage, email Simon
+"""Daily 7am reminder: for every deal still in the 'inquiry' stage, tell Simon
    "<Client> <ShowDate> is still in leads" with a link straight to the deal.
+
+⚠⚠ AS OF 2026-10-28 THIS IS A PIE CONTROL BUBBLE AND NOT AN EMAIL. Every lead is published
+   to the phone feed; the email is sent ONLY if that publish failed, or if the
+   `pie_suppress_approvals` kill switch is off. See the long comment at the publish site for why
+   this kind, alone among the published kinds, needs no ack-based email fallback.
 
 Dry-run by default; pass --send to actually send. Guarded to send at most ONCE
 PER DAY per deal (a bookkeeping key in cue_state), so re-running is safe.
@@ -68,9 +73,42 @@ def main():
     # published and reconciled exactly like the other nags, not fired once like the event kinds.
     _pie = [{"id": pie.item_id("leads", did), "title": who, "deal_id": did,
              "sub": "still in leads - %s" % when, "url": crm} for (did, who, when, crm) in standing]
-    pie.publish(c, "leads", _pie)
-    _keep = pie.unseen(c, "leads", [pie.item_id("leads", t[0]) for t in due])
-    due = [t for t in due if pie.item_id("leads", t[0]) in _keep]
+    _published = pie.publish(c, "leads", _pie)
+    # ⚠⚠ LEADS NEVER EMAIL - BUBBLE ONLY (Simon 2026-10-28: "this kind of email should go to
+    #    pie control as a bubble - never email"). This is the ONE published kind with no ack-based
+    #    email fallback, and four things make that safe rather than a hole:
+    #    1. A lead is a STANDING condition that publish() RECONCILES on every run, so the bubble
+    #       cannot be lost the way an event's single firing can. If the phone misses it today it is
+    #       still in the feed tomorrow, and it disappears by itself the moment the deal leaves
+    #       `inquiry`.
+    #    2. It is not the only surface. An `inquiry` deal already satisfies isFlashing(), so it has
+    #       a red card and a shield count in the CRM, and `v_inquiry > 0` is a term of
+    #       approve_counts()'s own `trigger` AND its due_deals union - so it puts a ghost on the
+    #       screen too. Email was the fourth place he was told.
+    #    3. A new web inquiry ALSO gets an instant one-shot bubble from submit_booking's
+    #       pie_alert(), so the phone hears about it the second it arrives, not at the next 7am.
+    #    4. ⚠⚠ THE ACK FALLBACK COULD NEVER HAVE WORKED HERE ANYWAY, which is what produced the
+    #       email he complained about. The item is PUBLISHED and the email DECIDED in the same run,
+    #       so no ack can possibly exist yet - pie.unseen() therefore returned every brand-new lead
+    #       and emailed it. *Measured: Rayner Abreu's row was created 21:43 UTC on 2026-10-27 and
+    #       acked at 23:51 UTC; the email went out in between.* EVERY new lead got exactly one
+    #       email, by construction, and no window or ack could have stopped it.
+    # ⚠ It is still gated on the SAME kill switch as everything else (pie.suppress_on). Turn
+    #   `pie_suppress_approvals` off and this goes straight back to emailing, which is the whole
+    #   point of having one switch.
+    # ⚠ And it is gated on the PUBLISH HAVING SUCCEEDED. publish() swallows its own errors by
+    #   design, so without that test a failed feed write would mean no bubble AND no email - the
+    #   one genuinely silent outcome. Simon's own rule: "email is a backup for if it fails to add
+    #   to pie control cue". So the only email left from here is a delivery failure, not a nag.
+    # ⚠ The guard key is deliberately NOT stamped when suppressing - nothing was sent, so a
+    #   later run with the switch off must still be free to send.
+    if _published and pie.suppress_on(c):
+        if due:
+            print("pie: %d lead reminder(s) are bubble-only - not emailing" % len(due))
+        due = []
+    else:
+        _keep = pie.unseen(c, "leads", [pie.item_id("leads", t[0]) for t in due])
+        due = [t for t in due if pie.item_id("leads", t[0]) in _keep]
     if SEND and _pie:
         pie.doorbell(c, "CRM: leads waiting", "%d lead%s still sitting in inquiries - open Pie Control"
                      % (len(_pie), "" if len(_pie) == 1 else "s"))
