@@ -54,7 +54,10 @@ def make_receipt(deal, contact, issued=None, paid_in_full=False, card_fee=None):
     pdf.set_text_color(*DARK); pdf.set_font("Helvetica", "B", 22)
     pdf.cell(0, 10, "THE SIMON SHOW", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_font("Helvetica", "", 10.5); pdf.set_text_color(*GREY)
-    pdf.cell(0, 5.5, "Simon Mandal - Celebrity Magician", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    # Mirrors _brandRole() in app.js - keep the two in step; nothing checks it.
+    _role = ("Corporate Magician" if (deal or {}).get("event_type") == "corporate"
+             else "Celebrity Magician")
+    pdf.cell(0, 5.5, "Simon Mandal - " + _role, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.cell(0, 5.5, "732.492.6071   |   Simon@theSimonShow.com   |   www.TheSimonShow.com",
              new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(3)
