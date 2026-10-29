@@ -935,6 +935,15 @@ def _claim_dispatch(cur, deal_id, key):
     except Exception:
         return True
 
+def _release_dispatch(cur, deal_id, key):
+    """Give back a claim taken by _claim_dispatch when the send did NOT happen, so a later run can
+    retry. Mirrors what run-due.js and send-now.js both do on a failed sendMail - without it a
+    held-back email is claimed for ever and silently never goes out."""
+    try:
+        cur.execute("delete from email_dispatch where deal_id=%s and cue_key=%s", (deal_id, key))
+    except Exception:
+        pass
+
 # "Fun action requested" (guest_excited) goes into the approval queue this many days before the
 # show. Simon 2026-10-13: "fun action requested email should enter approval cue 10 days before the
 # event date. if the ladder is triggered 10 days or less from the event date, it should enter the
@@ -1722,6 +1731,15 @@ def main():
     print(f"{TODAY}  -  {len(now_due)} send-now email(s)  (mode: {'SEND' if SEND else 'DRY-RUN'})")
     for (d,key,to,subj,body,st,no_safe,contact,cc) in now_due:
         print(f"  -> [now] {to}{('  cc:'+str(cc)) if cc else ''}  |  [{key}]  {subj[:70]}{'  [no-safe]' if no_safe else ''}")
+        # ⚠⚠ THE ENTRY COMES FROM `st`, NEVER FROM `e`. The collection loop above binds `e` and
+        #    Python leaks that binding past the end of the loop - so in HERE `e` is still the LAST
+        #    cue entry of the LAST deal examined, not the one being sent. now_due deliberately
+        #    carries no `e`. A stale `e.get("attach")` sent David Ganz and Christina Tell a
+        #    "W9 Attached" / "Magic Castle Invite" with NOTHING ATTACHED on 2026-10-28, and would
+        #    just as readily staple the W9 onto an unrelated email whenever that leftover entry
+        #    happened to carry one. `st` + `key` are in the tuple precisely so this is unambiguous.
+        _ent = st.get(key) or {}
+        _claimkey = _ent.get("dispatch_id") or key
         if SEND:
             # PIE CONTROL (step 5): "✓ Sent", "Agreement signed" and "Deposit paid" become phone
             # bubbles instead of email. The decision AND the write are public.pie_absorb_owner_note,
@@ -1739,17 +1757,38 @@ def main():
                 print("     pie absorb failed (emailing as normal):", _ax)
             if _absorbed:
                 print("     -> Pie Control bubble, not emailed")
-            elif _claim_dispatch(cur, d["id"], (st.get(key) or {}).get("dispatch_id") or key):
+            elif _claim_dispatch(cur, d["id"], _claimkey):
                 # The entry's own `attach` (set when it was held for approval) decides the PDF, so a
                 # send_now routed through THIS engine keeps it. Was receipts-only, which would have
                 # sent the Magic Castle invite with no invitation attached the moment that email
                 # started going through send_now. attachments_for() already knows 'magic_castle'.
-                _att_key = "deposit_receipt" if key.startswith("_depreceipt_") else (e.get("attach") or "")
-                atts = attachments.attachments_for(_att_key, d, contact) if _att_key else []
+                _att_key = "deposit_receipt" if key.startswith("_depreceipt_") else (_ent.get("attach") or "")
+                atts, _att_err = [], None
+                if _att_key:
+                    try:
+                        atts = attachments.attachments_for(_att_key, d, contact) or []
+                    except Exception as _ae:
+                        _att_err = "%s: %s" % (type(_ae).__name__, _ae)
+                    if not atts and not _att_err:
+                        _att_err = "attachments_for(%r) returned nothing" % (_att_key,)
+                # ⚠⚠ AN EMAIL WHOSE WHOLE POINT IS ITS PDF MUST NOT GO OUT WITHOUT IT. Give the claim
+                #    back and leave the entry unsent, so the next sweep retries, rather than mailing a
+                #    "W9 Attached" with no W9 - the exact failure this guard exists for. Loud, because
+                #    mailer.send_email is wrapped to swallow errors and this one must not be swallowed.
+                if _att_err:
+                    print("     !! ATTACHMENT MISSING for [%s] - NOT sending: %s" % (key, _att_err[:200]))
+                    _release_dispatch(cur, d["id"], _claimkey)
+                    try:
+                        cur.execute("insert into error_log(source,message,detail) values(%s,%s,%s)",
+                                    ("mailer", ("attachment missing for %s - email HELD, not sent" % key)[:500],
+                                     ("to %s | %s" % (to, _att_err))[:2000]))
+                    except Exception:
+                        pass
+                    continue
                 mailer.send_email(to, subj, body, owner=no_safe, attachments=atts, cc=cc)
             else:
                 print("     (already dispatched by the instant channel - skipping)")
-            ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("send_now",None); ne.pop("claimed",None)
+            ne={**_ent, "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("send_now",None); ne.pop("claimed",None)
             _archive_sent(cur, d["id"], key, to, subj, body, ne["sent_at"]); st[key]=_strip_heavy(ne)
             _save_cue(cur, d["id"], st, key)
     if SEND and now_due: print("send-now emails sent + flags cleared.")
