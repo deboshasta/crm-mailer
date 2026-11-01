@@ -26,7 +26,14 @@ def smcrm_subject(subject):
 
 # Signature card image: embedded INLINE (Content-ID) so email clients render it without the
 # recipient clicking "display images" (which they must do for remote-URL images).
-_CARD_URL = "https://www.thesimonshow.com/wp/wp-content/uploads/2024/02/business-card-front-and-back.jpg"
+# /!\ SERVED FROM THE NEW SITE, NOT THE WORDPRESS MEDIA LIBRARY (moved 2026-11-01). This URL
+#     is on EVERY email, and the WordPress install it used to live in may be deleted - 81
+#     already-sent emails still point at the old one, which is why that copy is left in place
+#     for as long as WordPress exists rather than being removed.
+# /!\ THERE ARE FIVE LIVE COPIES OF THIS URL: here, approve-email.js, run-due.js, send-now.js
+#     and public.submit_booking. Change one and the same email looks different depending on
+#     which sender happened to send it.
+_CARD_URL = "https://ideas.thesimonshow.com/assets/business-card.jpg"
 _CARD_LOCAL = os.path.join(os.path.dirname(__file__), "assets", "signature-card.jpg")
 
 def load_config():
