@@ -41,7 +41,7 @@ def body_html(who, when, days_txt, crm_url, token=None):
     b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
     b.append(f'<p style="margin:0 0 10px"><a href="{html.escape(crm_url)}" '
              f'style="color:#1155cc;font-weight:bold;text-decoration:underline">&#128220; Open this deal in the CRM</a></p>')
-    b.append(f'<p style="margin:0 0 6px"><b>{html.escape(who)}</b> is sitting in <b>Likely No</b> and the show is '
+    b.append(f'<p style="margin:0 0 6px"><b>{html.escape(who)}</b> is sitting in <b>Ball in Their Court</b> and the show is '
              f'{html.escape(days_txt)} ({html.escape(when)}).</p>')
     b.append('<p style="margin:0 0 14px;color:#5f6368">Move it to <b>Closed Lost</b>, or revive it if it&#39;s back on.</p>')
     # One click does it from here; the CRM link above is still there to revive it instead.
@@ -81,7 +81,7 @@ def main():
         standing.append((did, who, days_txt))
         if not FORCE_DEAL and (st.get(GUARD_KEY) or {}).get("pinged")==TODAY.isoformat():
             continue                                               # already emailed today
-        subj=f"Likely No - move {who} to Closed Lost? (show {when})"
+        subj=f"Ball in Their Court - move {who} to Closed Lost? (show {when})"
         crm=f"{CRM_BASE}/?deal={did}"
         due.append((did, subj, body_html(who, when, days_txt, crm, cust_tok), st))
     # ── PIE CONTROL (step 4) ──────────────────────────────────────────────────────────────────
@@ -90,13 +90,13 @@ def main():
     #   hours later while the deal is still sitting in Likely No. The feed is therefore built from
     #   `standing`: every likely_no deal inside the 4-day window, guard or no guard.
     _pie = [{"id": pie.item_id("likelyno", did), "title": who, "deal_id": did,
-             "sub": "in Likely No - show %s" % days_txt,
+             "sub": "in Ball in Their Court - show %s" % days_txt,
              "url": "%s/?deal=%s" % (CRM_BASE, did)} for (did, who, days_txt) in standing]
     pie.publish(c, "likelyno", _pie)
     _keep = pie.unseen(c, "likelyno", [pie.item_id("likelyno", d[0]) for d in due])
     due = [t for t in due if pie.item_id("likelyno", t[0]) in _keep]
     if SEND and _pie:
-        pie.doorbell(c, "CRM: Likely No deals", "%d deal%s in Likely No with the show close - open Pie Control"
+        pie.doorbell(c, "CRM: Ball in Their Court deals", "%d deal%s in Ball in Their Court with the show close - open Pie Control"
                      % (len(_pie), "" if len(_pie) == 1 else "s"))
 
     print(f"{TODAY}  -  {len(due)} likely-no nag(s) {'to SEND' if SEND else '(dry-run)'}{' [FORCED]' if FORCE_DEAL else ''}")

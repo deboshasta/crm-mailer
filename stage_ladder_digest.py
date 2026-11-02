@@ -33,7 +33,7 @@ STAGES = [
     ("closed_won",    "Closed Won",               "#3ecf8e"),
     ("refer_won",     "Refer Won",                "#3bb9a3"),
     ("closed_lost",   "Closed Lost",              "#f0616d"),
-    ("likely_no",     "Likely No",                "#b5766e"),
+    ("likely_no",     "Ball in Their Court",      "#b5766e"),
 ]
 
 # Chronological-ish reading order within a stage: what fires on arrival, then the proposal clock,
