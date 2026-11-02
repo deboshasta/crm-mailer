@@ -40,16 +40,16 @@ GCAL_PASTE_BASE = "https://crm-send-the-simon-show.vercel.app/api/gcal-link"
 # (guest-of-honor takes precedence, then event_type) so Simon's summary lines up.
 TRIVIA_SETS = {
     "goh": [
-        ("goh_number",           "Is there a number that means something to the guest of honor? A jersey number, a year, how many grandchildren, how many years doing what they do — anything at all.", "num"),
-        ("special_location",     "What is a location that has special meaning to the guest of honor?", "place"),
-        ("location_why",         "Why is this location special? Please be specific.", "place"),
-        ("best_qualities",       "What are some of the guest of honor's best qualities?", "people"),
-        ("hobbies",              "What are some of the guest of honor's hobbies?", "people"),
-        ("everyone_knows",       "What are a few things everyone knows about the guest of honor?", "people"),
-        ("no_one_knows",         "What are a few things almost no-one knows about the guest of honor? (Looking for obscure facts, nothing embarrassing please)", "people"),
-        ("accomplishments",      "What are some of the guest of honor's biggest accomplishments?", "people"),
-        ("goh_lots",             "What does the guest of honor have a lot of? Records, tools, shoes, mugs, stories about one particular thing — anything they have more of than most people. Roughly how many?", "lots"),
-        ("anything_else",        "Anything else you'd like me to know about the guest of honor?", "more"),
+        ("goh_number",      "Is there a number that means something to them? A jersey number, a year, how many of them there are, how many years they've been doing what they do: anything at all.", "goh"),
+        ("special_location","What is a location that has special meaning to them?", "goh"),
+        ("location_why",    "Why is that location special? Please be specific.", "goh"),
+        ("everyone_knows",  "What are they best known for?", "goh"),
+        ("best_qualities",  "What are some of their best qualities?", "goh"),
+        ("hobbies",         "What do they love doing when they are not working?", "goh"),
+        ("no_one_knows",    "What is something almost no-one knows about them? (Obscure is perfect, nothing embarrassing please)", "goh"),
+        ("accomplishments", "What are some of their biggest accomplishments?", "goh"),
+        ("goh_lots",        "What do they have a lot of? Trophies, traditions, tools, stories about one particular thing: anything they have more of than most people. Roughly how many?", "goh"),
+        ("anything_else",   "Anything else you'd like me to know about them?", "goh"),
     ],
     "nonprofit": [
         ("np_number",            "What is a number that has significance to your organization? (For example: we donated 125 kidneys, or we built 32 libraries.)", "num"),
@@ -102,7 +102,10 @@ TRIVIA_SETS = {
         ("pp_anything",          "Anything else you'd like me to know?", "more"),
     ],
 }
-TRIVIA_QUESTIONS = TRIVIA_SETS["goh"]                 # default / backward-compat
+# Unused (nothing reads it); kept as the module's nominal default. NOT the
+# goh set any more - those questions are an APPENDED section, never a set a
+# deal receives on its own.
+TRIVIA_QUESTIONS = TRIVIA_SETS["private"]
 # Section id -> heading, mirroring app_settings.trivia_question_sets -> sections and
 # crm-forms/trivia.html SECTIONS. The summary mail groups the answers the SAME way the client
 # saw them, so a gap in a section reads here as the missing ingredient it actually is.
@@ -111,6 +114,7 @@ TRIVIA_SECTIONS = [
     ("place", "Important places"),
     ("people", "Important people"),
     ("lots", "What there's a lot of"),
+    ("goh", "About {goh}"),
     ("more", "Anything else"),
 ]
 # Questions no longer ASKED, kept so an answer a client ALREADY GAVE still gets real wording in
@@ -126,17 +130,37 @@ RETIRED_TRIVIA_LABELS = {
 TRIVIA_LABELS = {k: q for qs in TRIVIA_SETS.values() for (k, q, _s) in qs}   # key -> label, all sets
 TRIVIA_LABELS.update({k: v for k, v in RETIRED_TRIVIA_LABELS.items() if k not in TRIVIA_LABELS})
 
+def goh_label(deal):
+    """The guest of honour as a section heading reads it. Mirrors gohLabel() in trivia.html.
+
+    Trailing punctuation is trimmed: Simon writes these with an exclamation mark ("Manalapan
+    Seniors!", "GRCC Men!") and "About Manalapan Seniors!" is a shout in a heading.
+    """
+    return (deal.get("guest_of_honor") or "").strip().rstrip(" !.,?;:")
+
+
 def pick_trivia_set(deal):
-    """Mirror trivia.html: GOH precedence, then event_type; municipal falls back to the non-profit
-    set (Simon plans custom municipal questions after the Closed-Won alert)."""
-    if deal.get("guest_of_honor"):
-        return TRIVIA_SETS["goh"]
+    """Mirror trivia.html: the EVENT TYPE decides the set, and a filled guest_of_honor APPENDS
+    the goh questions as their own section.
+
+    guest_of_honor used to outrank event_type, and Simon fills it with GROUPS as often as with a
+    person, so a school or corporate deal with a group of honour never saw its own questions.
+    Municipal falls back to the non-profit set (Simon plans custom municipal questions after the
+    Closed-Won alert).
+    """
     et = deal.get("event_type")
-    if et == "non_profit": return TRIVIA_SETS["nonprofit"]
-    if et == "corporate":  return TRIVIA_SETS["company"]
-    if et == "school":     return TRIVIA_SETS["school"]
-    if et == "municipal":  return TRIVIA_SETS["nonprofit"]
-    return TRIVIA_SETS["private"]
+    if   et == "non_profit": base = TRIVIA_SETS["nonprofit"]
+    elif et == "corporate":  base = TRIVIA_SETS["company"]
+    elif et == "school":     base = TRIVIA_SETS["school"]
+    elif et == "municipal":  base = TRIVIA_SETS["nonprofit"]
+    else:                    base = TRIVIA_SETS["private"]
+    if not goh_label(deal):
+        return base
+    # A key is how a stored answer is matched back to its label, so the same key twice would
+    # print one answer under two questions. No base set shares a key with the goh set today
+    # (they are prefixed co_ / sc_ / np_ / pp_), so this is insurance rather than a live fix.
+    have = {t[0] for t in base}
+    return list(base) + [t for t in TRIVIA_SETS["goh"] if t[0] not in have]
 
 PERF = {}   # performer_id -> {first_name, full_name}, loaded in main()
 
@@ -623,6 +647,38 @@ def selfcheckin_html(d, V, label):
              'custom poster / trivia ready &middot; route mapped.</p></div>')
     return "".join(b)
 
+def trivia_qs_for(deal):
+    """The questions this client was actually shown: Simon's per-deal override if he pinned one,
+    otherwise the set the routing gives.
+
+    trivia.html has always given the override absolute precedence; this file did not, so an
+    overridden deal's summary mail listed default questions as "(not answered)" and put the real
+    answers in the ungrouped lump at the end. The override stores the RESOLVED list by design, so
+    it is used as-is and nothing is appended to it - Simon curating questions by hand must not
+    have extra ones added behind his back.
+    """
+    st = deal.get("cue_state") or {}
+    if isinstance(st, str):
+        try:
+            st = json.loads(st or "{}")
+        except Exception:
+            st = {}
+    items = ((st.get("_trivia_qs") or {}).get("items")) or []
+    out = []
+    for p in items:
+        # Mirrors sanitizeQs in trivia.html: one malformed pair must never blank the list, and a
+        # two-element pair (an override saved before sections existed) still has to render.
+        if not isinstance(p, (list, tuple)) or len(p) < 2:
+            continue
+        k = str(p[0] if p[0] is not None else "").strip()
+        q = str(p[1] if p[1] is not None else "")
+        if not k or not q.strip():
+            continue
+        sec = str(p[2]).strip() if len(p) > 2 and p[2] is not None else ""
+        out.append((k, q, sec))
+    return out or pick_trivia_set(deal)
+
+
 def trivia_notify_html(d, V, crm_url, cal_url, answers):
     """Notification TO Simon when a client submits the trivia form: deal link, calendar link, all Q&A."""
     b=['<div style="font-family:Verdana,Arial,sans-serif;font-size:14px;color:#202124">']
@@ -636,7 +692,7 @@ def trivia_notify_html(d, V, crm_url, cal_url, answers):
     b.append(f'<h2 style="margin:0 0 4px">Trivia received from {html.escape(who)}</h2>')
     b.append(f'<p style="margin:0 0 14px;color:#5f6368">For {html.escape(when)}</p>')
     b.append('<table style="border-collapse:collapse;width:100%;max-width:640px">')
-    qs = pick_trivia_set(d)                 # same set the client saw (GOH precedence, then event type)
+    qs = trivia_qs_for(d)                   # exactly what the client was shown (override, else the routing)
     shown = set()
 
     def _row(q, a):
@@ -649,10 +705,14 @@ def trivia_notify_html(d, V, crm_url, cal_url, answers):
     # Grouped exactly as the form presented it. An entry with no section (a per-deal override saved
     # before sections existed) falls into the untitled group at the end rather than vanishing.
     seen_sec = set()
+    _who = goh_label(d)
     for sec_id, sec_title in TRIVIA_SECTIONS:
         grp = [t for t in qs if (t[2] if len(t) > 2 else "") == sec_id]
         if not grp:
             continue
+        # The goh heading carries the guest of honour's name, exactly as the client saw it. With
+        # no guest of honour there are no goh questions either, so this only ever substitutes.
+        sec_title = sec_title.replace("{goh}", _who) if "{goh}" in sec_title else sec_title
         seen_sec.add(sec_id)
         b.append(f'<tr><td style="padding:16px 0 2px"><div style="font-size:11px;letter-spacing:1.2px;'
                  f'text-transform:uppercase;color:#9aa0a6"><b>{html.escape(sec_title)}</b></div></td></tr>')
