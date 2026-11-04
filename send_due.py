@@ -385,7 +385,13 @@ def _flag_suppressed(key, d):
 OPTIONAL_FIELDS = {"Company", "GuestOfHonor", "ProposalLink", "LastShowYear", "EventDetails",
                    "PhotoLink", "PhotoGohLimit", "PhotoGuestLimit"}   # only shown inside their active photo block
 # when one of these is BLANK, drop the WHOLE line it sits on (don't show it, don't flag it)
-OPTIONAL_LINE_FIELDS = {"EventDetails"}
+# ⚠ GuestOfHonor joined this on 2026-11-04 (Simon made it optional "in the same ways" as
+# audience). It is in OPTIONAL_FIELDS above too, so a blank one has never BLOCKED a send - what
+# is new is that the line it sits on is dropped instead of rendering the label with nothing
+# after it. No active template uses {{GuestOfHonor}} today, so this is the rule being in place
+# for the first one that does; {{GuestOfHonorMagicLine}} is deliberately NOT listed, because it
+# has a non-blank fallback sentence and is therefore never empty.
+OPTIONAL_LINE_FIELDS = {"EventDetails", "GuestOfHonor"}
 def _drop_empty_optional_lines(raw, V):
     out=[]
     for ln in (raw or "").split("\n"):
