@@ -9,6 +9,9 @@ name: CRM self-nags
 # >=7am, likely-no >=8am, proposal 8am-8pm ET) and an afternoon retry.
 #   12:00 UTC = 8am ET  (morning — satisfies every gate)
 #   18:00 UTC = 2pm ET  (retry; each script no-ops if already sent today)
+# A fourth step rides along here: sending_flag_check.py, an integrity check rather than a
+# nag. It is here because this job already runs twice a day with DB creds and needs no new
+# cron entry of its own.
 # Times are UTC; EST (winter) lands ~1h earlier local, still inside the gates.
 # ---------------------------------------------------------------------------
 
@@ -44,6 +47,12 @@ jobs:
         run: python likely_no_nag.py --send
       - name: Proposal-not-sent self-nag
         run: python proposal_notsent_nag.py --send
+      # Integrity check, not a nag: alerts (error_log -> phone push) if a `_sending` transient has
+      # been STORED in cue_state, which hides that email from the approval queue for ever while
+      # approve_counts() keeps counting the deal. Silent unless something is wrong; its own 20h
+      # guard means the 12:00 and 18:00 runs cannot double-alert. See sending_flag_check.py.
+      - name: Stored _sending integrity check
+        run: python sending_flag_check.py --send
       - name: Alert Simon on failure
         if: failure()
         env:
