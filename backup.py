@@ -53,7 +53,16 @@ RCLONE_REMOTE = _cfg("RCLONE_REMOTE")   # e.g. "gdrive:CRM-Backups" (optional; s
 #    it on a restore would re-mail people who opted out (CAN-SPAM + sender reputation).
 # !! `campaign_recipients` deliberately stays IN the dump: it is operational, not historical, and
 #    restoring without it mid-campaign risks double-sending.
-DUMP_SKIP_DATA = ["public.email_events"]
+# cron.job_run_details is pg_cron's own run log. pg_cron calls pg_extension_config_dump() on it,
+# so pg_dump DOES include its data even though it is an extension table. With timer-pushes firing
+# every minute it had reached 149,205 rows / 62 MB, and egress over a Postgres connection is
+# UNCOMPRESSED WIRE BYTES - so this one table cost ~62 MB of Supabase egress a night (~1.8 GB a
+# month) however small it compressed into the .dump. It was the biggest single cause of the
+# 2026-11-10 egress overage (6.22 GB against the Free plan's 5 GB). Nothing in this repo reads it:
+# job health comes from private.heartbeat_check() and heartbeat.py, both via private.config.
+# db/prune_cron_log.sql also keeps the table itself to 7 days; this line stops even that crossing
+# the wire.
+DUMP_SKIP_DATA = ["public.email_events", "cron.job_run_details"]
 
 STAMP = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%MZ")
 DUMP  = "crm-backup-%s.dump" % STAMP
