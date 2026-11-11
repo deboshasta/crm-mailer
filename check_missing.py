@@ -15,7 +15,23 @@ def main():
     cols = ["id","stage","show_date","show_time","venue_address","occasion","company","guest_of_honor",
             "proposal_link","audience_details","show_format","amount","deposit_amount","balance_amount",
             "event_type","deal_name","cue_state","stage_changed_at","created_at","primary_contact_id"]
-    cur.execute("select "+",".join(cols)+" from deals")
+    # EGRESS: cue_state is the fat part of a deal row (~1.5 MB of `body` text across the table) and
+    # NOTHING in this script reads an entry's body - send_due.missing_fields() only asks whether the
+    # key EXISTS (send_due.py:407, "a hand-written email is assumed complete"). So fetch every entry
+    # whole but with each STRING body replaced by "". Same keys, same truthiness, a fraction of the
+    # bytes. Part of the 2026-11-10 egress work (6.22 GB against the Free plan's 5 GB).
+    # ⚠ jsonb_typeof(...)='string', not `? 'body'`: an explicit "body": null must STAY null, or
+    #   `e.get("body") is not None` flips to True and the entry silently reads as complete.
+    # ⚠ If you ever need the real body text here, read it from public.sent_emails by
+    #   (deal_id, cue_key). Do NOT undo this and refetch the column whole.
+    CUE_SLIM = ("(select jsonb_object_agg(k, case when jsonb_typeof(v->'body')='string' "
+                "then jsonb_set(v,'{body}','\"\"'::jsonb) else v end) "
+                "from jsonb_each(cue_state) x(k,v)) as cue_state")
+    _sel = ",".join(CUE_SLIM if _c == "cue_state" else _c for _c in cols)
+    # ⚠ The row set stays WIDE on purpose. This script walks send_due.CUE anchor-by-anchor for every
+    #   deal, so narrowing it in SQL would mean restating CUE's anchors and stage gates in a second
+    #   language - the drift pie_shadow.py exists to catch. Only the bytes per row are trimmed.
+    cur.execute("select "+_sel+" from deals")
     deals=[dict(zip(cols,r)) for r in cur.fetchall()]
     cur.execute("select id,first_name,full_name,email,phone_mobile,phone_other from contacts")
     CB={r[0]:dict(zip(["id","first_name","full_name","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}

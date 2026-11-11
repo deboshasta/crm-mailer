@@ -20,7 +20,33 @@ def main():
             "proposal_link","audience_details","show_format","amount","deposit_amount","balance_amount",
             "event_type","is_repeat","customize_token","performer_id","proposal_sent_at",
             "deal_name","cue_state","stage_changed_at","created_at","primary_contact_id"]
-    cur.execute("select "+",".join(cols)+" from deals")
+    # EGRESS: cue_state is the fat part of a deal row (~1.5 MB of `body` text across the table) and
+    # NOTHING in this script reads an entry's body - send_due.missing_fields() only asks whether the
+    # key EXISTS (send_due.py:407, "a hand-written email is assumed complete"). So fetch every entry
+    # whole but with each STRING body replaced by "". Same keys, same truthiness, a fraction of the
+    # bytes. Part of the 2026-11-10 egress work (6.22 GB against the Free plan's 5 GB).
+    # ⚠ jsonb_typeof(...)='string', not `? 'body'`: an explicit "body": null must STAY null, or
+    #   `e.get("body") is not None` flips to True and the entry silently reads as complete.
+    # ⚠ If you ever need the real body text here, read it from public.sent_emails by
+    #   (deal_id, cue_key). Do NOT undo this and refetch the column whole.
+    CUE_SLIM = ("(select jsonb_object_agg(k, case when jsonb_typeof(v->'body')='string' "
+                "then jsonb_set(v,'{body}','\"\"'::jsonb) else v end) "
+                "from jsonb_each(cue_state) x(k,v)) as cue_state")
+    _sel = ",".join(CUE_SLIM if _c == "cue_state" else _c for _c in cols)
+    # EGRESS: and only the deals that can possibly produce a row below. The loop keeps an entry
+    # only when it is blocked and neither sent nor cancelled, so the same test in SQL turns a
+    # 579-row fetch into a handful. Deliberately permissive in the SAFE direction: `v ? 'blocked'`
+    # matches send_due's own _sweep_where, and an extra row costs one skipped loop iteration while
+    # a missing one would silently drop a paused email out of the nag.
+    _blocked_where = """
+        cue_state is not null
+        and exists (select 1 from jsonb_each(cue_state) _x(k,v)
+                     where jsonb_typeof(v) = 'object'
+                       and v ? 'blocked'
+                       and coalesce(v->>'sent','') = ''
+                       and coalesce(v->>'cancelled','') in ('','false'))
+    """
+    cur.execute("select "+_sel+" from deals where "+_blocked_where)
     deals = [dict(zip(cols,r)) for r in cur.fetchall()]
     cur.execute("select id,first_name,last_name,full_name,email,phone_mobile,phone_other from contacts")
     CB = {r[0]:dict(zip(["id","first_name","last_name","full_name","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
