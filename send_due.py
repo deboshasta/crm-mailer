@@ -768,6 +768,46 @@ def _cap_full(contact):
     if full:    return _cap_first(full)
     return _cap_first(f or "")
 
+# ─── the deal's SECONDARY CONTACT, copied on its client email (Simon 2026-11-16) ──────────
+# `deals.secondary_contact_id` is a second person on the job - a planner, an assistant, a
+# co-host - who is CC'd on the deal's client-facing email.
+#
+# ⚠⚠ RESOLVED HERE, AT SEND TIME, AND NEVER STAMPED ONTO A CUE ENTRY. A stored entry does not
+#    re-render, so a cc written at queue time would miss everything already sitting in the
+#    approval queue and would need a write at each of the many places that queue an email.
+#    Reading the column at the send site is one place per sender, covers entries queued before
+#    the secondary was added, and keeps the house rule that the recipient comes from the
+#    DATABASE and never from the request.
+# ⚠⚠ MIRRORED in vercel-send/api/{run-due,send-now,approve-email,signed-pdf}.js. The one that
+#    matters most is approve-email.js: it sends every FLAG-mode email, and flag cues outnumber
+#    auto 22 to 14, so a copy missing there means most client email is quietly uncopied.
+_SIGN_LINK = re.compile(r"sign\.html\?token=", re.I)
+
+def _deal_cc(d, body, CB, to=""):
+    """The secondary contact's address for this send, or None.
+
+    ⚠⚠ NOBODY IS COPIED ON A SIGNATURE REQUEST (Simon 2026-11-16: "Not the signature one").
+       `_contract_<id>` and `_ctupd_<id>_<ts>` carry a sign.html?token= link, and that link is
+       enough to EXECUTE the agreement - copying a planner on it would let them sign on the
+       primary contact's behalf. The test is on the LINK IN THE BODY, never on a list of cue
+       keys: a key list is five copies that drift, and the next signature-bearing key added
+       would silently inherit the CC. A link cannot be added without the body carrying it.
+    """
+    sid = d.get("secondary_contact_id")
+    if not sid:
+        return None
+    if body and _SIGN_LINK.search(body):
+        return None
+    sc = CB.get(sid) or {}
+    addr = (sc.get("email") or "").strip()
+    if not addr:
+        return None
+    # Never copy the address the mail is already going to - a self-CC reads as a system fault,
+    # and the secondary contact IS the primary on some deals (a planner booking for herself).
+    if addr.lower() == (to or "").strip().lower():
+        return None
+    return addr
+
 def merge_values(deal, contact):
     sd=_d(deal.get("show_date"))
     _ey=_d(deal.get("created_at"))
@@ -1248,7 +1288,7 @@ def main():
             "performer_id","commission_amount","proposal_sent_at","photos_received_at","photos_notified_at",
             "deal_name","cue_state","stage_changed_at","created_at","primary_contact_id","gcal_url",
             "deposit_status","deposit_paid_at","require_trivia","send_stage_intro","photo_goh_limit","photo_guest_limit",
-            "last_client_reply_at"]
+            "last_client_reply_at","secondary_contact_id"]
     # EGRESS: fetch only deals this run can act on (was: all 512 rows incl. every cue_state, ~1MB/run).
     # Kept sets (mirror every pass below — update BOTH when adding a pass):
     #   * CUE stages (incl. gcal/w9/gig check-ins/magic-castle-cw subsets of these)
@@ -1299,7 +1339,9 @@ def main():
     deals=[dict(zip(cols_d,r)) for r in cur.fetchall()]
     # EGRESS: fetch only the contacts on the actionable deals (was: all ~2,700 contacts every run).
     # Every CB lookup below is CB.get(deal.primary_contact_id) for a deal in `deals`, so this is complete.
-    _cids=list({str(d.get("primary_contact_id")) for d in deals if d.get("primary_contact_id")})
+    # ⚠ secondary_contact_id is pulled into the SAME query, not a second one: _deal_cc() looks the
+    #   secondary contact up in CB, so a secondary missing from here would silently never be CC'd.
+    _cids=list({str(x) for d in deals for x in (d.get("primary_contact_id"), d.get("secondary_contact_id")) if x})
     if _cids:
         cur.execute("select id,first_name,last_name,full_name,name_pronunciation,email,phone_mobile,phone_other from contacts where id::text = any(%s)", (_cids,))
         CB={r[0]:dict(zip(["id","first_name","last_name","full_name","name_pronunciation","email","phone_mobile","phone_other"],r)) for r in cur.fetchall()}
@@ -1599,10 +1641,11 @@ def main():
     print(f"{TODAY}  -  {len(due)} email(s) due today  (mode: {'SEND' if SEND else 'DRY-RUN'})"
           + ('' if _cad_ok else f'  [holding: outside 9am-9pm ET window, now {tz.hour()}:00 ET]'))
     for (d,key,to,subj,body,st) in due:
-        print(f"  -> {to}  |  [{key}]  {subj[:70]}")
+        _cc=_deal_cc(d, body, CB, to)
+        print(f"  -> {to}{('  cc:'+_cc) if _cc else ''}  |  [{key}]  {subj[:70]}")
         if SEND and _cad_ok:
             if _claim_dispatch(cur, d["id"], (st.get(key) or {}).get("dispatch_id") or key):
-                mailer.send_email(to, subj, body)
+                mailer.send_email(to, subj, body, cc=_deal_cc(d, body, CB, to))
             else:
                 print("     (already dispatched - skipping)")
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("blocked",None)
@@ -1851,7 +1894,9 @@ def main():
                     except Exception:
                         pass
                     continue
-                mailer.send_email(to, subj, body, owner=no_safe, attachments=atts, cc=cc)
+                # the entry's own cc (nothing writes one today) OR the deal's secondary contact
+                mailer.send_email(to, subj, body, owner=no_safe, attachments=atts,
+                                  cc=(cc or _deal_cc(d, body, CB, to)))
             else:
                 print("     (already dispatched by the instant channel - skipping)")
             ne={**_ent, "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("send_now",None); ne.pop("claimed",None)
@@ -1891,10 +1936,11 @@ def main():
             unblock.append((d,key,to,subj,body,st))
     print(f"{TODAY}  -  {len(unblock)} paused email(s) now complete -> sending")
     for (d,key,to,subj,body,st) in unblock:
-        print(f"  -> [unblocked] {to}  |  [{key}]  {subj[:60]}")
+        _cc=_deal_cc(d, body, CB, to)
+        print(f"  -> [unblocked] {to}{('  cc:'+_cc) if _cc else ''}  |  [{key}]  {subj[:60]}")
         if SEND:
             if _claim_dispatch(cur, d["id"], (st.get(key) or {}).get("dispatch_id") or key):
-                mailer.send_email(to,subj,body)
+                mailer.send_email(to, subj, body, cc=_deal_cc(d, body, CB, to))
             else:
                 print("     (already dispatched - skipping)")
             ne={**(st.get(key) or {}), "sent":TODAY.isoformat(), "sent_at":_now_iso()}; ne.pop("blocked",None); ne.pop("send_now",None)
