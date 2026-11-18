@@ -9,9 +9,10 @@ name: CRM self-nags
 # >=7am, likely-no >=8am, proposal 8am-8pm ET) and an afternoon retry.
 #   12:00 UTC = 8am ET  (morning — satisfies every gate)
 #   18:00 UTC = 2pm ET  (retry; each script no-ops if already sent today)
-# A fourth step rides along here: sending_flag_check.py, an integrity check rather than a
-# nag. It is here because this job already runs twice a day with DB creds and needs no new
-# cron entry of its own.
+# Two further steps ride along here, both integrity checks rather than nags, both here
+# because this job already runs twice a day with DB creds and needs no new cron entry:
+#   sending_flag_check.py    - a STORED `_sending` transient hiding an email for ever
+#   scriptorium_backup.py    - Scriptorium's nightly backup having gone stale
 # Times are UTC; EST (winter) lands ~1h earlier local, still inside the gates.
 # ---------------------------------------------------------------------------
 
@@ -34,6 +35,8 @@ jobs:
       DB_USER:      ${{ vars.DB_USER }}
       DB_PORT:      ${{ vars.DB_PORT }}
       JOIN_PUSH_BASE: ${{ secrets.JOIN_PUSH_BASE }}
+      # Read-only on the SEPARATE Scriptorium project, for the backup check below.
+      SCRIPTORIUM_SECRET_KEY: ${{ secrets.SCRIPTORIUM_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -53,6 +56,16 @@ jobs:
       # guard means the 12:00 and 18:00 runs cannot double-alert. See sending_flag_check.py.
       - name: Stored _sending integrity check
         run: python sending_flag_check.py --send
+      # Also not a nag, and also here because this job already runs twice a day: Scriptorium
+      # (a SEPARATE Supabase project) backs itself up nightly, and this bubbles a Pie Control
+      # item when that backup goes stale - clearing itself again when it recovers, since
+      # `backup` is not one of pie_feed's event kinds and so counts as a standing condition.
+      # It lives here rather than in Scriptorium because the phone reads ONE feed, this
+      # database's pie_items, and reaching it from there would mean carrying a CRM credential
+      # out to another project. See scriptorium_backup.py.
+      - name: Scriptorium backup freshness
+        run: python scriptorium_backup.py --send
+
       - name: Alert Simon on failure
         if: failure()
         env:
