@@ -2240,9 +2240,22 @@ def main():
     for (d, subj, body, who, when) in triv_due:
         print(f"  -> [trivia] {subj[:70]}")
         if SEND:
-            mailer.send_email(triv_to, subj, body)
-            cur.execute("update deals set trivia_notified_at=now() where id=%s", (d["id"],))
+            # ⚠⚠ THE STAMP GOES ONLY ON A SEND THAT RETURNED, AND THAT IS THE WHOLE POINT.
+            #    mailer.send_email is _safe_send in this run: it SWALLOWS the exception,
+            #    records it in _send_fails + error_log, and returns None. So stamping
+            #    unconditionally - as this did until 2026-11-19 - lost the arrival for good,
+            #    because trivia_notified_at is exactly what makes the row never due again.
+            #    Leaving it unstamped means the next sweep simply tries again.
+            # ⚠ THE BUBBLE FIRES EITHER WAY, deliberately. It is the second channel, so a
+            #    dead SMTP is the moment it matters most - and public.pie_alert is
+            #    `on conflict (item_id) do nothing` against an id stamped with the RECEIPT
+            #    time, so re-bubbling on every retry is a no-op rather than a duplicate.
+            _sent = mailer.send_email(triv_to, subj, body)
             _materials_bubble(cur, d["id"], "trivia", d.get("trivia_received_at"), who, when)
+            if _sent is not None:
+                cur.execute("update deals set trivia_notified_at=now() where id=%s", (d["id"],))
+            else:
+                print("    !! NOT stamping trivia_notified_at - the send failed, so it stays due next sweep")
     if SEND and triv_due: print("trivia notifications sent + marked.")
 
     # ---- photos-received notifications: email Simon when a client submits the photo form ----
@@ -2269,9 +2282,22 @@ def main():
     for (d, subj, body, who, when) in photo_due:
         print(f"  -> [photos] {subj[:70]}")
         if SEND:
-            mailer.send_email(photo_to, subj, body)
-            cur.execute("update deals set photos_notified_at=now() where id=%s", (d["id"],))
+            # ⚠⚠ THE STAMP GOES ONLY ON A SEND THAT RETURNED, AND THAT IS THE WHOLE POINT.
+            #    mailer.send_email is _safe_send in this run: it SWALLOWS the exception,
+            #    records it in _send_fails + error_log, and returns None. So stamping
+            #    unconditionally - as this did until 2026-11-19 - lost the arrival for good,
+            #    because photos_notified_at is exactly what makes the row never due again.
+            #    Leaving it unstamped means the next sweep simply tries again.
+            # ⚠ THE BUBBLE FIRES EITHER WAY, deliberately. It is the second channel, so a
+            #    dead SMTP is the moment it matters most - and public.pie_alert is
+            #    `on conflict (item_id) do nothing` against an id stamped with the RECEIPT
+            #    time, so re-bubbling on every retry is a no-op rather than a duplicate.
+            _sent = mailer.send_email(photo_to, subj, body)
             _materials_bubble(cur, d["id"], "photos", d.get("photos_received_at"), who, when)
+            if _sent is not None:
+                cur.execute("update deals set photos_notified_at=now() where id=%s", (d["id"],))
+            else:
+                print("    !! NOT stamping photos_notified_at - the send failed, so it stays due next sweep")
     if SEND and photo_due: print("photo notifications sent + marked.")
 
     # PHASE-1: if any individual send failed above, email Simon one summary (the run itself did not crash).
