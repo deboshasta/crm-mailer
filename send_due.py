@@ -1263,6 +1263,56 @@ def _pie_hold_decision(deal_id, key, entry, pie_on, seen_map, now_utc):
     return False, "suppression on - waiting for the phone%s" % age
 
 
+def _materials_bubble(cur, deal_id, what, rec_at, who, when):
+    """Put a "materials arrived" bubble on the phone, BESIDE the email.
+
+    ⚠⚠ WITHOUT THIS, MATERIALS ARRIVING HAD EXACTLY ONE CHANNEL - one email, in an inbox
+       that also carries DMARC reports, voicemail notices and car-dealer newsletters. Every other
+       event this system treats as important has at least TWO: an approval rings the doorbell AND
+       flags the board AND draws a ghost; a new web lead bubbles AND emails; missing customizations
+       bubble AND redden the card. Pictures arriving had the email alone - which is how Erica
+       Vavrence's 2026-11-12 submission went unnoticed for a week. The email went out and is still
+       in Sent; it was just too quiet to be an alert. (Simon, 2026-11-19: "i got pictures from
+       erica but didn't get any alert to let me know they arrived.")
+    ⚠⚠ THE ID IS STAMPED WITH THE RECEIPT TIME, NOT STABLE PER DEAL. pie_alert is
+       `on conflict (item_id) do nothing`, so a stable id would silently refuse to bubble a
+       RESUBMISSION - and a client sending a second batch is precisely when he needs telling
+       again. Stamping it gives exactly one bubble per submission: re-running the same sweep
+       cannot double it, a genuine resubmit gets its own. This is the EVENT case of the id rule in
+       pie.item_id, which argues the OPPOSITE (stable, undated) for standing conditions - because
+       a standing condition re-dated daily could never be acked in advance.
+    ⚠ raise=true matches every other 'alert' in the feed (new leads, the vip call reminder);
+      it is the house convention for this kind, not a new escalation.
+    ⚠ It fires AFTER the notified_at stamp and swallows everything. A phone bubble must never be
+      the reason a notification is lost, and pie_alert is itself `exception when others then
+      return false`. It also rings public.pie_ring() by itself, so this needs no doorbell of its
+      own - and that ring is SILENT by Simon's own 2026-10-25 request.
+    ⚠ It deliberately does NOT replace the email. The standing rule is that email is the backup
+      for a bubble that fails to reach the queue, so both go.
+    ⚠ Useful side effect: it fires even when the email send FAILED, because the stamp above
+      happens either way. So an arrival can no longer be lost outright by a bad SMTP moment.
+    """
+    try:
+        try:
+            _st = str(int(rec_at.timestamp()))
+        except Exception:
+            _st = "".join(ch for ch in str(rec_at) if ch.isdigit())[:14]
+        _photos = (what == "photos")
+        cur.execute(
+            "select public.pie_alert(%s,%s,%s,%s,%s,%s)",
+            ("%s_%s_%s" % (what, deal_id, _st),
+             "Pictures received" if _photos else "Trivia received",
+             "%s - %s" % (who or "client", when or "TBD"),
+             deal_id,
+             # The photos deep link opens the deal focused on the Pictures section, which is where
+             # the work actually is. The same URL the email body already hands him.
+             "%s/?deal=%s&photos=1" % (CRM_BASE, deal_id) if _photos
+             else "%s/?deal=%s" % (CRM_BASE, deal_id),
+             True))
+    except Exception as _bx:
+        print("    (pie bubble failed, harmless):", _bx)
+
+
 def main():
     c=connect(); c.autocommit=True; cur=c.cursor()
     # PHASE-1 RESILIENCE: never let one bad send crash the whole run. Every mailer.send_email goes through a
@@ -2185,13 +2235,14 @@ def main():
         subj = f"TRIVIA received from {who} for {when}"
         crm_url = f"{CRM_BASE}/?deal={d['id']}"
         cal_url = gcal_link(d, V)
-        triv_due.append((d, subj, trivia_notify_html(d, V, crm_url, cal_url, ans)))
+        triv_due.append((d, subj, trivia_notify_html(d, V, crm_url, cal_url, ans), who, when))
     print(f"{TODAY}  -  {len(triv_due)} trivia notification(s) due")
-    for (d, subj, body) in triv_due:
+    for (d, subj, body, who, when) in triv_due:
         print(f"  -> [trivia] {subj[:70]}")
         if SEND:
             mailer.send_email(triv_to, subj, body)
             cur.execute("update deals set trivia_notified_at=now() where id=%s", (d["id"],))
+            _materials_bubble(cur, d["id"], "trivia", d.get("trivia_received_at"), who, when)
     if SEND and triv_due: print("trivia notifications sent + marked.")
 
     # ---- photos-received notifications: email Simon when a client submits the photo form ----
@@ -2213,13 +2264,14 @@ def main():
                 f'style="color:#1155cc;font-weight:bold;text-decoration:underline">{html.escape(photos_url)}</a></p>'
                 f'<p style="margin:0">Open the deal at <a href="{html.escape(crm_url)}" '
                 f'style="color:#1155cc;text-decoration:underline">{html.escape(crm_url)}</a></p></div>')
-        photo_due.append((d, subj, body))
+        photo_due.append((d, subj, body, who, when))
     print(f"{TODAY}  -  {len(photo_due)} photo notification(s) due")
-    for (d, subj, body) in photo_due:
+    for (d, subj, body, who, when) in photo_due:
         print(f"  -> [photos] {subj[:70]}")
         if SEND:
             mailer.send_email(photo_to, subj, body)
             cur.execute("update deals set photos_notified_at=now() where id=%s", (d["id"],))
+            _materials_bubble(cur, d["id"], "photos", d.get("photos_received_at"), who, when)
     if SEND and photo_due: print("photo notifications sent + marked.")
 
     # PHASE-1: if any individual send failed above, email Simon one summary (the run itself did not crash).
